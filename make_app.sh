@@ -34,3 +34,5 @@ PLIST
 IDENT=$(security find-identity -v -p codesigning 2>/dev/null | grep -o '"Apple Development: [^"]*"' | head -1 | tr -d '"')
 codesign --force --deep --sign "${IDENT:--}" "$APP" >/dev/null 2>&1 || true
 echo "built $APP"
+# Keep a real copy in /Applications (launchers such as Raycast ignore symlinks).
+if [ -d /Applications ]; then [ -e /Applications/Onboard.app ] && trash /Applications/Onboard.app; ditto "$APP" /Applications/Onboard.app && echo "installed /Applications/Onboard.app"; fi
