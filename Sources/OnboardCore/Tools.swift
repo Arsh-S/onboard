@@ -6,12 +6,29 @@ import Foundation
 public enum Tools {
     static let store = EKEventStore()
 
-    public static func date(_ s: String) -> Date? {
+    /// Tests set this so nothing is written to the user's Reminders, Calendar or Mail.
+    nonisolated(unsafe) public static var dryRun = false
+
+    static let numberWords: [String: Double] = ["a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "ten": 10, "fifteen": 15, "twenty": 20, "thirty": 30, "half": 0.5]
+
+    /// "in two hours", "in 20 minutes", "in 3 days" (NSDataDetector misses these), else any date it can find.
+    public static func date(_ s: String, now: Date = Date()) -> Date? {
+        let l = s.lowercased()
+        if let m = try? NSRegularExpression(pattern: #"(?:in\s+)?(\d+(?:\.\d+)?|[a-z]+)\s+(minute|min|hour|hr|day|week)s?"#).firstMatch(in: l, range: NSRange(l.startIndex..., in: l)),
+           let r1 = Range(m.range(at: 1), in: l), let r2 = Range(m.range(at: 2), in: l), let n = Double(l[r1]) ?? numberWords[String(l[r1])] {
+            let unit: Double = l[r2].hasPrefix("min") ? 60 : l[r2].hasPrefix("h") ? 3600 : l[r2] == "day" ? 86400 : 604800
+            if l.contains("in ") || l.contains("from now") { return now.addingTimeInterval(n * unit) }
+        }
+        return detect(s)
+    }
+
+    static func detect(_ s: String) -> Date? {
         guard !s.isEmpty, let d = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.date.rawValue) else { return nil }
         return d.firstMatch(in: s, range: NSRange(s.startIndex..., in: s))?.date
     }
 
     public static func addReminder(_ title: String, when: String) async -> String {
+        if dryRun { return "Reminder added: \(title)" + (date(when).map { ", due \($0.formatted(date: .abbreviated, time: .shortened))" } ?? "") }
         guard (try? await store.requestFullAccessToReminders()) == true else { return "Reminders access was not granted" }
         let r = EKReminder(eventStore: store)
         r.title = title; r.calendar = store.defaultCalendarForNewReminders()
@@ -22,6 +39,7 @@ public enum Tools {
     }
 
     public static func addEvent(_ title: String, when: String) async -> String {
+        if dryRun { return date(when).map { "Event added: \(title), \($0.formatted(date: .abbreviated, time: .shortened))" } ?? "I could not read the time \"\(when)\"" }
         guard (try? await store.requestFullAccessToEvents()) == true else { return "Calendar access was not granted" }
         guard let start = date(when) else { return "I could not read the time \"\(when)\"" }
         let e = EKEvent(eventStore: store)
@@ -35,6 +53,7 @@ public enum Tools {
         var c = URLComponents(); c.scheme = "mailto"; c.path = to
         c.queryItems = [URLQueryItem(name: "subject", value: subject), URLQueryItem(name: "body", value: body)]
         guard let u = c.url else { return "Could not build the draft" }
+        if dryRun { return "Draft opened in Mail (not sent)" }
         NSWorkspace.shared.open(u)
         return "Draft opened in Mail (not sent)"
     }

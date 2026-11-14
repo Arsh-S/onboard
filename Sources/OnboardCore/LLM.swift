@@ -18,19 +18,30 @@ public final class Bonsai: @unchecked Sendable {
         session = URLSession(configuration: c)
     }
 
-    public struct Reply: @unchecked Sendable { public let json: [String: Any]; public let secs: Double; public let tokens: Int }
+    public struct Reply: @unchecked Sendable { public let json: [String: Any]; public let secs: Double; public let tokens: Int; public var promptTokens = 0 }
+
+    /// `schemaJSON` is a raw JSON schema string: property order is kept, and the model writes fields in that order
+    /// (a Swift dictionary would shuffle them, and a small model reasons much better when "plan" comes first).
+    public func json(system: String, user: String, schemaJSON: String, maxTokens: Int = 160, small useSmall: Bool = false, temperature: Double = 0.2) async throws -> Reply {
+        try await json(system: system, user: user, schema: ["__raw__": schemaJSON], maxTokens: maxTokens, small: useSmall, temperature: temperature)
+    }
 
     public func json(system: String, user: String, schema: [String: Any], maxTokens: Int = 160, small useSmall: Bool = false, temperature: Double = 0.2) async throws -> Reply {
+        let raw = schema["__raw__"] as? String
         var body: [String: Any] = [
             "model": useSmall ? small : big,
             "messages": [["role": "system", "content": system], ["role": "user", "content": user]] + (noThink ? [["role": "assistant", "content": "<think>\n\n</think>\n\n"]] : []),
             "max_tokens": maxTokens, "temperature": temperature,
-            "response_format": ["type": "json_schema", "json_schema": ["name": "out", "strict": true, "schema": schema]],
+            "response_format": ["type": "json_schema", "json_schema": ["name": "out", "strict": true, "schema": raw == nil ? schema : ["__SCHEMA__": 1]]],
         ]
         for (k, v) in extra { body[k] = v }
         var req = URLRequest(url: URL(string: base + "/chat/completions")!)
         req.httpMethod = "POST"; req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        var data = try JSONSerialization.data(withJSONObject: body)
+        if let raw, let str = String(data: data, encoding: .utf8) {
+            data = Data(str.replacingOccurrences(of: "{\"__SCHEMA__\":1}", with: raw).utf8)
+        }
+        req.httpBody = data
         localBytes += req.httpBody?.count ?? 0
         let t0 = now()
         let (d, resp) = try await session.data(for: req)
@@ -40,7 +51,8 @@ public final class Bonsai: @unchecked Sendable {
         let content = (((j?["choices"] as? [[String: Any]])?.first?["message"] as? [String: Any])?["content"] as? String) ?? "{}"
         let toks = ((j?["usage"] as? [String: Any])?["completion_tokens"] as? Int) ?? 0
         if toks > 8, dt > 0 { lastTokPerSec = Double(toks) / dt }
-        return Reply(json: (try? JSONSerialization.jsonObject(with: Data(content.utf8)) as? [String: Any]) ?? [:], secs: dt, tokens: toks)
+        let ptoks = ((j?["usage"] as? [String: Any])?["prompt_tokens"] as? Int) ?? 0
+        return Reply(json: (try? JSONSerialization.jsonObject(with: Data(content.utf8)) as? [String: Any]) ?? [:], secs: dt, tokens: toks, promptTokens: ptoks)
     }
 
     public func models() async throws -> [String] {

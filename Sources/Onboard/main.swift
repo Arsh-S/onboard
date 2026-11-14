@@ -16,18 +16,28 @@ if args.count > 2, args[1] == "snap" {
         if let q = opt("--menu") { print("menu match:", Screen.findMenu(s, q) ?? "none") }
     } else { print("no window for \(args[2])") }
     exit(0)
+} else if args.count > 2, args[1] == "mem" {
+    Task { @MainActor in
+        let mem = MemoryIndex(folders: [supportDir.appendingPathComponent("memory")], store: supportDir.appendingPathComponent("memory_index.json"))
+        await mem.refresh()
+        print("chunks \(mem.count) files \(mem.fileCount)")
+        for h in await mem.search(args[2], k: 5) { print(String(format: "%.3f [%@] %@", h.score, h.chunk.title, String(h.chunk.text.prefix(150)).replacingOccurrences(of: "\n", with: " "))) }
+        exit(0)
+    }
+    dispatchMain()
 } else if args.count > 2, args[1] == "ask" {
     Task { @MainActor in
         let mem = MemoryIndex(folders: [supportDir.appendingPathComponent("memory")], store: supportDir.appendingPathComponent("memory_index.json"))
         await mem.refresh()
-        Screen.allowForeground = args.contains("--foreground")   // headless checks never touch what is on screen
+        Screen.allowForeground = args.contains("--foreground")
+        Tools.dryRun = !args.contains("--live")   // headless checks never touch what is on screen
         let agent = Agent(bonsai: Bonsai(), memory: mem)
         agent.owner = "Arsh"
         let app = opt("--app").flatMap { Screen.runningApp($0) }
         let t = CFAbsoluteTimeGetCurrent()
         await agent.run(args[2], app: app)
         for s in agent.steps { print(String(format: "  %@(%@)  %.2fs  say: %@\n     -> %@", s.action, s.detail, s.secs, s.say, String(s.result.prefix(140)).replacingOccurrences(of: "\n", with: " "))) }
-        print(String(format: "ANSWER (%.1fs): %@", CFAbsoluteTimeGetCurrent() - t, agent.answer))
+        print(String(format: "ANSWER (%.1fs, prompt %d tok): %@", CFAbsoluteTimeGetCurrent() - t, agent.promptTokens, agent.answer))
         exit(0)
     }
     dispatchMain()

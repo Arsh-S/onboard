@@ -37,6 +37,7 @@ public final class Agent {
     public private(set) var request = ""
     public private(set) var lastSnapshot: ScreenSnapshot?
     public private(set) var turnSecs = 0.0
+    public private(set) var promptTokens = 0
     public var owner = "you"
     public let bonsai: Bonsai
     public let memory: MemoryIndex
@@ -55,30 +56,46 @@ public final class Agent {
     var system: String {
         """
         You are Onboard, an assistant that lives on \(owner)'s Mac and works with no internet. You see the screen as text and act with your own cursor.
-        Now: \(Date().formatted(date: .complete, time: .shortened)).
-        Each step choose ONE action. Fields: action, target (an element number from the screen, or 0), text, say.
-        - answer: finish. say = your spoken reply to \(owner), one or two short sentences.
-        - point: show \(owner) where something is. target = element number. say = what to do there. Use for "how do I" and "where is" questions.
-        - click: press an element. target = element number.
-        - type: type text into a field. target = field number, text = what to type.
-        - menu: choose a menu bar command. text = the command name, for example "New Note" or "Chart".
-        - key: press a key. text = one of: return, tab, escape, save, select all, copy, paste, undo, new.
-        - open_app: text = app name.
-        - search_memory: search \(owner)'s notes, manuals and files on this Mac. text = search words. Use before answering questions about facts, procedures or past notes.
-        - add_reminder: text = title | when.   - add_event: text = title | when.
-        - draft_email: text = recipient | subject | body. Opens a draft; \(owner) sends it.
-        say = a few words narrating this step, in plain speech (for answer and point it is the full reply).
-        Rules: only use element numbers that appear on the screen. Never invent facts: search memory or read the screen. Prefer menu over hunting for buttons. When the request is done, answer.
-        Examples:
-        Request: how do I make this bold? -> if a Bold button is on screen, point at its number; if it is only a menu command: {"action":"answer","target":0,"text":"","say":"Use the Format menu, then Font, then Bold."}
-        Request: make a new note that says hello -> {"action":"menu","target":0,"text":"New Note","say":"Starting a new note."} then {"action":"type","target":0,"text":"hello","say":"Typing it in."} then {"action":"answer","target":0,"text":"","say":"Done, your note says hello."}
-        Request: what does the manual say about filter changes? -> {"action":"search_memory","target":0,"text":"filter change procedure","say":"Checking the manual."}
-        Answer only in JSON.
+        Each step you output ONE JSON object with these fields, in this order:
+        - plan: under 10 words, what this single step does (it is shown to \(owner)).
+        - action: one of the actions below.
+        - target: an element number from the screen, or 0 when the action needs none.
+        - text: the literal content for the action (see each action). Never put explanations in text.
+
+        Actions:
+        - answer: finish. text = your spoken reply to \(owner), one or two short sentences.
+        - point: show where something is. target = element number, text = what to do there in one sentence. For "how do I" and "where is" questions.
+        - click: press an element. target = element number, text = "".
+        - type: put words into a document or field. target = the field number (or 0 for the main text area), text = EXACTLY the words to insert, nothing else.
+        - menu: choose a menu bar command. text = the command name, for example "New Note" or "Bold".
+        - key: text = one of: return, tab, escape, save, select all, copy, paste, undo, new.
+        - open_app: text = the app name.
+        - search_memory: look in \(owner)'s notes, manuals and files on this Mac. text = search words. Do this before answering questions about facts, procedures, people or past notes.
+        - add_reminder: text = title | when        - add_event: text = title | when
+        - draft_email: text = recipient | subject | body   (opens a draft; \(owner) sends it)
+
+        Rules:
+        - Only use element numbers that appear on the screen.
+        - Never invent facts. Use search_memory or what the screen says.
+        - Each result line under "Steps so far" really happened. Do not repeat a step that succeeded.
+        - If the request is a question ("what", "how", "why", "what do I do"), never change anything on screen: find the facts, then answer with them.
+        - Only type, click or add things when \(owner) asked for that.
+        - As soon as the request is done, use answer and say what you did or found.
+
+        Examples (request -> one step):
+        add a line that says Pump A checked -> {"plan":"Type the line into the document","action":"type","target":0,"text":"Pump A checked"}
+        (after that succeeded) -> {"plan":"Report back","action":"answer","target":0,"text":"Done. I added the line Pump A checked."}
+        how do I make this bold? -> {"plan":"Use the Bold menu command","action":"answer","target":0,"text":"Open the Format menu, choose Font, then Bold."}
+        where is the share button? -> {"plan":"Point at Share","action":"point","target":12,"text":"It's right here, the Share button in the toolbar."}
+        what does the manual say about filter changes? -> {"plan":"Check the manual","action":"search_memory","target":0,"text":"filter change procedure"}
+        (after the search returned the procedure) -> {"plan":"Tell the steps","action":"answer","target":0,"text":"Swap the filter every 30 days: power down the fan, pull the tray, and seat the new one."}
+        remind me to call Sam tomorrow at 9 -> {"plan":"Add the reminder","action":"add_reminder","target":0,"text":"Call Sam | tomorrow 9am"}
+        Answer only with the JSON object.
         """
     }
 
     func history() -> String {
-        steps.isEmpty ? "(none)" : steps.map { "- \($0.action)(\($0.detail.prefix(80))) -> \($0.result.prefix(500))" }.joined(separator: "\n")
+        steps.isEmpty ? "(none)" : steps.map { "- \($0.action)(\($0.detail.prefix(80))) -> \($0.result.prefix(1300))" }.joined(separator: "\n")
     }
 
     public func run(_ text: String, app: NSRunningApplication? = nil) async {
@@ -98,23 +115,21 @@ public final class Agent {
             let screen = snap?.text() ?? "(no app window is open)"
             // The model may only name elements that are really on screen.
             let ids = [0] + (snap?.elements.filter { $0.id > 0 }.map(\.id) ?? [])
-            let schema: [String: Any] = [
-                "type": "object",
-                "properties": ["action": ["type": "string", "enum": Self.actions], "target": ["type": "integer", "enum": ids], "text": ["type": "string"], "say": ["type": "string"]],
-                "required": ["action", "target", "text", "say"], "additionalProperties": false,
-            ]
+            let actionList = Self.actions.map { "\"\($0)\"" }.joined(separator: ",")
+            let schema = "{\"type\":\"object\",\"properties\":{\"plan\":{\"type\":\"string\"},\"action\":{\"type\":\"string\",\"enum\":[\(actionList)]},\"target\":{\"type\":\"integer\",\"enum\":[\(ids.map(String.init).joined(separator: ","))]},\"text\":{\"type\":\"string\"}},\"required\":[\"plan\",\"action\",\"target\",\"text\"],\"additionalProperties\":false}"
             let hints = snap.map { Screen.menuHints($0, for: req) } ?? []
-            let user = "Screen right now:\n\(screen)\nMenu commands that may help: \(hints.isEmpty ? "(none match)" : hints.joined(separator: "; "))\n\nRequest from \(owner): \(req)\n\nSteps so far:\n\(history())\n\nNext step. JSON: action, target, text, say."
-            guard let r = try? await bonsai.json(system: system, user: user, schema: schema, maxTokens: 170) else {
+            let user = "Screen right now:\n\(screen)\nMenu commands that may help: \(hints.isEmpty ? "(none match)" : hints.joined(separator: "; "))\n\nRequest from \(owner): \(req)\n\nSteps so far:\n\(history())\n\nNow: \(Date().formatted(date: .complete, time: .shortened)). Next step as JSON (plan, action, target, text)."
+            guard let r = try? await bonsai.json(system: system, user: user, schemaJSON: schema, maxTokens: 170) else {
                 answer = "I can't reach Bonsai. Is LM Studio running?"; await stage?.speak(answer); return
             }
             let action = r.json["action"] as? String ?? "answer"
             let tid = r.json["target"] as? Int ?? 0
             let txt = (r.json["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            let say = (r.json["say"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let say = (r.json["plan"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            promptTokens = r.promptTokens
 
             if action == "answer" {
-                answer = say.isEmpty ? (txt.isEmpty ? "Done." : txt) : say
+                answer = txt.isEmpty ? (say.isEmpty ? "Done." : say) : txt
                 await stage?.speak(answer); return
             }
             // The same step twice means it is stuck: summarize and stop.
@@ -148,7 +163,7 @@ public final class Agent {
         case "point":
             guard let el = snap?.element(tid) else { return ("There is no element \(tid) on screen", false) }
             await stage?.glide(to: CGPoint(x: el.frame.midX, y: el.frame.midY), frame: el.frame, thought: el.label)
-            answer = say.isEmpty ? "It's right here: \(el.label)." : say
+            answer = text.isEmpty ? "It's right here: \(el.label)." : text
             await stage?.speak(answer)
             return ("Pointed at \(el.label)", true)
         case "click":
@@ -168,14 +183,14 @@ public final class Agent {
                 _ = Screen.focus(snap, id: tid)
                 // Empty one-line fields are set directly; anything with content gets the text added at the end.
                 if el.value.isEmpty, Screen.setValue(snap, id: tid, text: text) { return ("Typed \"\(text.prefix(60))\" into \(el.label)", false) }
-                if Screen.insertAtEnd(snap, id: tid, text: text) { return ("Added \"\(text.prefix(60))\" at the end of \(el.label)", false) }
+                if Screen.insertAtEnd(snap, id: tid, text: text) { return ("Success: the text now ends with \"\(text.prefix(60))\". If the request is complete, answer now.", false) }
             } else {
                 stage?.thought(say.isEmpty ? "Typing" : say)
                 // No field named: use the focused or main text area, still without stealing focus.
                 if let snap, let fid = Screen.defaultField(snap), let el = snap.element(fid) {
                     step.frame = el.frame; step.point = CGPoint(x: el.frame.midX, y: el.frame.midY)
                     await stage?.glide(to: step.point!, frame: el.frame, thought: say.isEmpty ? "Typing" : say)
-                    if Screen.insertAtEnd(snap, id: fid, text: text) { return ("Added \"\(text.prefix(60))\" to \(el.label)", false) }
+                    if Screen.insertAtEnd(snap, id: fid, text: text) { return ("Success: the document now ends with \"\(text.prefix(60))\". If the request is complete, answer now.", false) }
                 }
             }
             guard await Screen.bringForward(app) else { return ("Could not bring \(app.localizedName ?? "the app") forward", false) }
@@ -196,7 +211,8 @@ public final class Agent {
             try? await Task.sleep(nanoseconds: 600_000_000)
             return (ok ? "Chose \(path)" : "Could not choose \(path)", false)
         case "key":
-            guard let app = target, let k = Self.keys[text.lowercased()] else { return ("Unknown key \(text)", false) }
+            let name = Self.keys.keys.sorted { $0.count > $1.count }.first { text.lowercased().contains($0) } ?? ""
+            guard let app = target, let k = Self.keys[name] else { return ("Unknown key. Use one of: return, tab, escape, save, select all, copy, paste, undo, new", false) }
             stage?.thought(say.isEmpty ? "Pressing \(text)" : say)
             guard await Screen.bringForward(app) else { return ("Could not bring the app forward", false) }
             Screen.key(k.0, command: k.1)
@@ -212,7 +228,21 @@ public final class Agent {
             let hits = await memory.search(text, k: 3)
             guard let top = hits.first else { return ("Nothing in memory about that", false) }
             step.source = top.chunk.source
-            return (hits.map { "[\($0.chunk.title)] \($0.chunk.text.prefix(380))" }.joined(separator: "\n"), false)
+            // A question gets a focused answer from the passages alone (small prompt: faster and more faithful than the full loop).
+            if Self.isQuestion(request) {
+                let passages = hits.map { "[\($0.chunk.title)]\n\($0.chunk.text.prefix(700))" }.joined(separator: "\n\n")
+                let schema = "{\"type\":\"object\",\"properties\":{\"answer\":{\"type\":\"string\"}},\"required\":[\"answer\"],\"additionalProperties\":false}"
+                if let r = try? await bonsai.json(system: "You are Onboard, \(owner)'s assistant on a Mac with no internet. Answer from the passages only. If they give a procedure, say its steps in order. Two or three short spoken sentences, no lists, no markdown. If the passages do not answer it, say so. JSON only.",
+                                                  user: "Passages from \(owner)'s files:\n\(passages)\n\nQuestion: \(request)\n\nJSON: answer.", schemaJSON: schema, maxTokens: 140),
+                   let a = r.json["answer"] as? String, !a.isEmpty {
+                    steps[steps.count - 1].result = "Found in \(top.chunk.title)"; steps[steps.count - 1].done = true
+                    steps[steps.count - 1].source = top.chunk.source
+                    answer = a
+                    await stage?.speak(a)
+                    return ("Found in \(top.chunk.title)", true)
+                }
+            }
+            return ("Found in \(owner)'s files:\n" + hits.map { "[\($0.chunk.title)] \($0.chunk.text.prefix(420))" }.joined(separator: "\n") + "\nUse these facts. If the request was a question, answer it now.", false)
         case "add_reminder":
             let p = text.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
             stage?.thought(say.isEmpty ? "Adding a reminder" : say)
@@ -232,6 +262,12 @@ public final class Agent {
         default:
             return ("Unknown action \(action)", false)
         }
+    }
+
+    static func isQuestion(_ r: String) -> Bool {
+        let l = r.lowercased().trimmingCharacters(in: .whitespaces)
+        if l.hasSuffix("?") { return true }
+        return ["what", "how", "who", "when", "where", "why", "which", "is ", "are ", "does", "do i", "can ", "tell me"].contains { l.hasPrefix($0) }
     }
 
     func summarizeAfter(_ result: String) async {
