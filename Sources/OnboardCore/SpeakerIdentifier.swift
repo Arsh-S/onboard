@@ -61,6 +61,21 @@ public final class SpeakerIdentifier: @unchecked Sendable {
 
     /// Enroll (or re-enroll) one person from about 10 s of their speech.
     @discardableResult
+    /// Add one more sample of a person's voice to their profile (creates the profile on the first sample).
+    /// Short clips are tiled like at recognition time, so a one-word sample is embedded the same way it will be matched.
+    public func addSample(name: String, audio: [Float], weight: Float = 1) async throws {
+        let c = try await Self.embed(sk: sk, tileAudio(audio, to: Self.embTile), options: oneSpk)
+        lock.withLock {
+            if let i = people.firstIndex(where: { $0.name == name }) {
+                for j in 0..<min(c.count, people[i].sum.count) { people[i].sum[j] += c[j] * weight }
+                people[i].count += weight
+            } else {
+                people.append(EnrolledPerson(name: name, sum: c.map { $0 * weight }, count: weight, enrolledAt: Date()))
+            }
+        }
+        try save()
+    }
+
     public func enroll(name: String, audio: [Float]) async throws -> EnrolledPerson {
         let c = try await Self.embed(sk: sk, audio, options: oneSpk)
         let p = EnrolledPerson(name: name, sum: c.map { $0 * Self.enrollWeight }, count: Self.enrollWeight, enrolledAt: Date())

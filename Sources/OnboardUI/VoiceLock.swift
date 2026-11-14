@@ -37,7 +37,11 @@ private let voiceLog = Logger(subsystem: "net.arshsingh.onboard", category: "voi
     @ObservationIgnored private let lock = NSLock()
     static let enrollSeconds = 8.0
     /// Cosine distance under which a voice counts as the owner (same speaker is typically 0.1 to 0.4, others 0.7+).
-    static let ownerDistance: Float = 0.5
+    static let ownerDistance: Float = 0.62
+    /// Distance of the last voice checked, and the clip if it was turned away (so the owner can say "that was me").
+    var lastDistance: Float?
+    var canLearnLast = false
+    @ObservationIgnored private var lastRejected: [Float]?
     static let store = URL(fileURLWithPath: NSHomeDirectory() + "/Library/Application Support/Onboard/owner_voice.json")
 
     func load(downloadBase: URL?) async {
@@ -56,36 +60,75 @@ private let voiceLog = Logger(subsystem: "net.arshsingh.onboard", category: "voi
         guard lockEnabled, enrolled, let spk else { return true }
         guard let v = try? await spk.identify(audio) else { return false }
         voiceLog.notice("voice distance to owner: \(v.d1)")
-        return v.d1 < Self.ownerDistance
+        lastDistance = v.d1
+        let ok = v.d1 < Self.ownerDistance
+        if ok {
+            canLearnLast = false; lastRejected = nil
+            // Keep learning: every accepted clip sharpens the profile a little.
+            if v.d1 > 0.25 { try? await spk.addSample(name: ownerName(), audio: audio, weight: 0.5) }
+        } else { lastRejected = audio; canLearnLast = true }
+        return ok
     }
 
     // MARK: enrollment
 
+    static let trainPrompts = [
+        "Say:  Onboard", "Again:  Onboard", "Once more:  Onboard", "A bit quieter:  Onboard", "From further back:  Onboard",
+        "Say:  Onboard, what's on my calendar today?", "Say:  Onboard, remind me to call back tomorrow.",
+        "Now talk normally for a few seconds, about anything.",
+    ]
+    @ObservationIgnored private var trainStep = 0
+    @ObservationIgnored private var trainVAD: EnergyVAD?
+    @ObservationIgnored private var trainFresh = true
+
+    /// Guided training: the wake word several ways, two full requests, and some free speech. Each one becomes a sample.
     func enroll() {
-        guard !enrolling, state == .ready, let spk else { return }
-        let wasListening = listening
+        guard !enrolling, state == .ready, spk != nil else { return }
         stopListening()
-        enrolling = true; enrollProgress = 0; enrollMessage = "Listening… say a few sentences"
-        enrollSamples = []
-        capture.onChunk = { [weak self] c in
+        enrolling = true; enrollProgress = 0; trainStep = 0; trainFresh = true
+        enrollMessage = Self.trainPrompts[0]
+        let tv = EnergyVAD(threshold: max(0.006, vad.threshold)); tv.minUtterance = 0.3
+        trainVAD = tv
+        capture.onChunk = { [weak self] chunk in
             guard let self else { return }
-            self.lock.lock(); self.enrollSamples += c; let n = self.enrollSamples.count; self.lock.unlock()
-            DispatchQueue.main.async { MainActor.assumeIsolated { self.enrollProgress = min(1, Double(n) / Double(SR) / Self.enrollSeconds) } }
+            for u in tv.feed(chunk) { Task { @MainActor in await self.trainSample(u) } }
         }
         do { try capture.start() } catch { enrolling = false; enrollMessage = "Microphone unavailable"; return }
+        Task {   // give up politely if nothing is heard for a long time
+            try? await Task.sleep(nanoseconds: 90_000_000_000)
+            if enrolling { finishTraining(message: trainStep > 0 ? "Saved \(trainStep) samples." : "I did not hear anything. Try again.") }
+        }
+    }
+
+    private func trainSample(_ u: EnergyVAD.Utterance) async {
+        guard enrolling, u.duration >= 0.3, let spk else { return }
+        if let t = transcriber(), let text = try? await t.transcribe(u.audio), Self.isNoise(text) { return }   // a cough or a click is not a sample
+        guard enrolling else { return }
+        let name = ownerName()
+        if trainFresh { for p in spk.names { try? spk.remove(name: p) }; trainFresh = false }
+        do { try await spk.addSample(name: name, audio: u.audio, weight: u.duration > 2 ? 2 : 1) } catch { return }
+        trainStep += 1
+        enrolled = true
+        enrollProgress = Double(trainStep) / Double(Self.trainPrompts.count)
+        if trainStep >= Self.trainPrompts.count { finishTraining(message: "Trained on \(trainStep) samples. Onboard knows your voice.") }
+        else { enrollMessage = Self.trainPrompts[trainStep] }
+    }
+
+    private func finishTraining(message: String) {
+        capture.stop(); trainVAD = nil
+        enrolling = false; enrollMessage = message
+        canLearnLast = false; lastRejected = nil
+        if alwaysListening { startListening() }
+    }
+
+    /// "That was me": add the clip that was just turned away to the profile.
+    func learnLastRejected() {
+        guard let audio = lastRejected, let spk else { return }
+        canLearnLast = false; lastRejected = nil
         Task {
-            try? await Task.sleep(nanoseconds: UInt64(Self.enrollSeconds * 1e9))
-            capture.stop()
-            lock.lock(); let audio = enrollSamples; enrollSamples = []; lock.unlock()
-            let name = ownerName()
-            do {
-                for p in spk.names { try? spk.remove(name: p) }
-                _ = try await spk.enroll(name: name, audio: audio)
-                try? spk.save()
-                enrolled = true; enrollMessage = "Voice saved. Only \(name) can give orders now."
-            } catch { enrollMessage = "I could not hear enough speech. Try again a bit closer." }
-            enrolling = false
-            if wasListening || alwaysListening { startListening() }
+            try? await spk.addSample(name: ownerName(), audio: audio, weight: 2)
+            enrolled = true
+            enrollMessage = "Got it. I added that to your voice."
         }
     }
 

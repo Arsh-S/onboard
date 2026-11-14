@@ -21,6 +21,8 @@ struct SettingsData: Equatable {
     var voiceMessage = ""
     var voiceLock = true
     var alwaysListening = false
+    var voiceCanLearn = false
+    var voiceLast = ""
 }
 
 struct SettingsActions {
@@ -32,6 +34,7 @@ struct SettingsActions {
     var enrollVoice: () -> Void = {}
     var toggleLock: () -> Void = {}
     var toggleAlways: () -> Void = {}
+    var learnVoice: () -> Void = {}
 }
 
 struct SettingsView: View {
@@ -110,17 +113,25 @@ struct SettingsView: View {
                             tile("waveform")
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(data.voiceEnrolled ? "Onboard knows your voice" : "Teach Onboard your voice").font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.primary)
-                                Text(data.voiceEnrolling ? "Keep talking… \(Int(data.voiceProgress * 100))%" : data.voiceMessage.isEmpty ? (data.voiceReady ? "8 seconds of you talking. Argmax SpeakerKit, on this Mac." : "Loading the voice model") : data.voiceMessage)
-                                    .font(.system(size: 12)).foregroundStyle(Theme.secondary).lineLimit(2)
+                                Text(data.voiceEnrolling ? data.voiceMessage : data.voiceMessage.isEmpty ? (data.voiceReady ? (data.voiceEnrolled ? "Train again any time. \(data.voiceLast)" : "A one minute guided training. Argmax SpeakerKit, on this Mac.") : "Loading the voice model") : data.voiceMessage)
+                                    .font(.system(size: data.voiceEnrolling ? 14 : 12, weight: data.voiceEnrolling ? .semibold : .regular))
+                                    .foregroundStyle(data.voiceEnrolling ? Theme.accent : Theme.secondary).lineLimit(2)
+                                if data.voiceEnrolling { ProgressView(value: data.voiceProgress).tint(Theme.accent).frame(width: 170) }
                             }
                             Spacer()
-                            Button(data.voiceEnrolled ? "Redo" : "Enroll") { act.enrollVoice() }
+                            if data.voiceCanLearn && !data.voiceEnrolling {
+                                Button("That was me") { act.learnVoice() }
+                                    .buttonStyle(.plain).font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.primary)
+                                    .padding(.horizontal, 10).frame(height: 28)
+                                    .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.white.opacity(0.10)))
+                            }
+                            Button(data.voiceEnrolled ? "Retrain" : "Train") { act.enrollVoice() }
                                 .buttonStyle(.plain).font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.ink)
                                 .padding(.horizontal, 12).frame(height: 28)
                                 .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.accent))
                                 .disabled(!data.voiceReady || data.voiceEnrolling).opacity(!data.voiceReady || data.voiceEnrolling ? 0.5 : 1)
                         }
-                        .padding(.horizontal, 12).frame(height: 56)
+                        .padding(.horizontal, 12).frame(minHeight: 62)
                         line
                         HStack(spacing: 10) {
                             tile("lock")
@@ -308,7 +319,8 @@ struct SettingsHost: View {
                                           toggleSpeak: { model.speakAnswers.toggle() },
                                           enrollVoice: { model.voice.enroll() },
                                           toggleLock: { model.voice.lockEnabled.toggle() },
-                                          toggleAlways: { model.voice.alwaysListening.toggle() }))
+                                          toggleAlways: { model.voice.alwaysListening.toggle() },
+                                          learnVoice: { model.voice.learnLastRejected() }))
     }
 }
 
@@ -320,7 +332,9 @@ extension AppModel {
                      speakAnswers: speakAnswers, failedHotkeys: hotkeyFailures,
                      voiceReady: voice.state == .ready, voiceEnrolled: voice.enrolled, voiceEnrolling: voice.enrolling,
                      voiceProgress: voice.enrollProgress, voiceMessage: voice.enrollMessage,
-                     voiceLock: voice.lockEnabled, alwaysListening: voice.alwaysListening)
+                     voiceLock: voice.lockEnabled, alwaysListening: voice.alwaysListening,
+                     voiceCanLearn: voice.canLearnLast,
+                     voiceLast: voice.lastDistance.map { String(format: "Last match %.0f%%.", max(0, min(1, 1 - Double($0))) * 100) } ?? "")
     }
 }
 
