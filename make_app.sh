@@ -22,7 +22,6 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleShortVersionString</key><string>0.1</string>
   <key>CFBundleVersion</key><string>1</string>
   <key>LSMinimumSystemVersion</key><string>15.0</string>
-  <key>LSUIElement</key><true/>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSMicrophoneUsageDescription</key><string>Onboard listens when you hold the talk key. Audio is transcribed on this Mac and never leaves it.</string>
   <key>NSRemindersFullAccessUsageDescription</key><string>Onboard adds reminders when you ask it to.</string>

@@ -12,7 +12,7 @@ public enum OnboardApp {
         let d = AppDelegate()
         delegate = d
         app.delegate = d
-        app.setActivationPolicy(.accessory)     // menu bar app, no Dock icon
+        app.setActivationPolicy(.regular)       // Dock icon and menu bar item both
         app.run()
     }
 }
@@ -62,6 +62,11 @@ public enum OnboardApp {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    /// Clicking the Dock icon opens the Onboard window.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        settings.show(); return true
+    }
 
     // MARK: menu bar
 
