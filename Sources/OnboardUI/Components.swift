@@ -45,10 +45,11 @@ struct ArrowShape: Shape {
 
 enum StatusIcon {
     /// Template image of the mark for the menu bar.
-    static func make() -> NSImage {
+    /// `tint` nil gives the plain template mark; a colour gives a tinted one (amber loading, green ready, teal working, red problem).
+    static func make(tint: NSColor? = nil) -> NSImage {
         let s: CGFloat = 18
         let img = NSImage(size: NSSize(width: s, height: s), flipped: false) { _ in
-            NSColor.black.set()
+            (tint ?? NSColor.black).set()
             let ring = NSBezierPath()
             ring.appendArc(withCenter: NSPoint(x: s / 2, y: s / 2), radius: 6.2, startAngle: -9, endAngle: 279, clockwise: false)
             ring.lineWidth = 1.8; ring.lineCapStyle = .round; ring.stroke()
@@ -61,7 +62,7 @@ enum StatusIcon {
             a.close(); a.fill()
             return true
         }
-        img.isTemplate = true
+        img.isTemplate = tint == nil
         return img
     }
 }

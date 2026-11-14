@@ -84,6 +84,32 @@ public enum OnboardApp {
         menu.addItem(.separator())
         menu.addItem(item("Quit Onboard", #selector(quit)))
         statusItem.menu = menu
+        // The icon shows state at a glance: amber while models load, green when ready, pulsing teal while working, red if Bonsai is unreachable.
+        statusTimer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshStatusIcon() }
+        }
+    }
+
+    private var statusTimer: Timer?
+    private var lastStatus = ""
+    private var pulse = false
+
+    private func refreshStatusIcon() {
+        let busy = model.agent.running || model.pill == .listening || model.pill == .thinking || model.pill == .speaking
+        let loaded = model.hearing == .ready && model.speaking == .ready
+        let state = busy ? "working" : (model.thinking != .ready && loaded) ? "problem" : loaded ? "ready" : "loading"
+        pulse.toggle()
+        let key = state + (state == "working" ? (pulse ? "1" : "0") : "")
+        guard key != lastStatus else { return }
+        lastStatus = key
+        let color: NSColor = switch state {
+            case "working": NSColor(red: 0.18, green: 0.83, blue: 0.75, alpha: pulse ? 1 : 0.45)
+            case "ready": NSColor(red: 0.30, green: 0.85, blue: 0.50, alpha: 1)
+            case "problem": NSColor(red: 0.94, green: 0.36, blue: 0.33, alpha: 1)
+            default: NSColor(red: 0.96, green: 0.68, blue: 0.26, alpha: 1)
+        }
+        statusItem.button?.image = StatusIcon.make(tint: color)
+        statusItem.button?.toolTip = ["working": "Onboard is working", "ready": "Onboard is ready", "problem": "Onboard cannot reach Bonsai (LM Studio)", "loading": "Onboard is loading models"][state]
     }
 
     private func item(_ title: String, _ action: Selector) -> NSMenuItem {
