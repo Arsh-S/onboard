@@ -24,6 +24,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>LSMinimumSystemVersion</key><string>15.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSMicrophoneUsageDescription</key><string>Onboard listens when you hold the talk key. Audio is transcribed on this Mac and never leaves it.</string>
+  <key>NSContactsUsageDescription</key><string>Onboard looks up a contact's number when you ask it to draft a message to them.</string>
   <key>NSRemindersFullAccessUsageDescription</key><string>Onboard adds reminders when you ask it to.</string>
   <key>NSCalendarsFullAccessUsageDescription</key><string>Onboard adds calendar events when you ask it to.</string>
   <key>NSAppleEventsUsageDescription</key><string>Onboard opens apps and drafts when you ask it to.</string>

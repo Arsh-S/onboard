@@ -216,7 +216,7 @@ final class AppModel {
     func stop() { agent.cancel() }
 
     private func turnEnded() {
-        if bonsai.lastTokPerSec > 0 { tokPerSec = bonsai.lastTokPerSec }
+        // The footer keeps the measured generation speed; per-request figures include prompt reading and would understate it.
         if answer.isEmpty { answer = agent.answer }
         if !gotReply { replySecs = CFAbsoluteTimeGetCurrent() - runStart }
         if pill == .thinking { setPill(.idle) }

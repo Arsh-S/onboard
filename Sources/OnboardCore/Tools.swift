@@ -1,4 +1,5 @@
 import AppKit
+import Contacts
 import EventKit
 import Foundation
 
@@ -56,6 +57,31 @@ public enum Tools {
         if dryRun { return "Draft opened in Mail (not sent)" }
         NSWorkspace.shared.open(u)
         return "Draft opened in Mail (not sent)"
+    }
+
+    /// Look a person up in the Mac's Contacts (on-device). Returns their full name and a phone number or email to message.
+    public static func lookupContact(_ name: String) async -> (name: String, handle: String)? {
+        let q = name.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { return nil }
+        let store = CNContactStore()
+        guard (try? await store.requestAccess(for: .contacts)) == true else { return nil }
+        let keys = [CNContactGivenNameKey, CNContactFamilyNameKey, CNContactNicknameKey, CNContactPhoneNumbersKey, CNContactEmailAddressesKey] as [CNKeyDescriptor]
+        guard let found = try? store.unifiedContacts(matching: CNContact.predicateForContacts(matchingName: q), keysToFetch: keys), !found.isEmpty else { return nil }
+        // Prefer an exact first-name or full-name match, then anyone with a mobile number.
+        let ranked = found.sorted { a, b in
+            func score(_ c: CNContact) -> Int {
+                let full = "\(c.givenName) \(c.familyName)".lowercased().trimmingCharacters(in: .whitespaces)
+                return (full == q.lowercased() ? 4 : 0) + (c.givenName.lowercased() == q.lowercased() || c.nickname.lowercased() == q.lowercased() ? 2 : 0) + (c.phoneNumbers.isEmpty ? 0 : 1)
+            }
+            return score(a) > score(b)
+        }
+        for c in ranked {
+            let full = "\(c.givenName) \(c.familyName)".trimmingCharacters(in: .whitespaces)
+            let mobile = c.phoneNumbers.first { ($0.label ?? "").lowercased().contains("mobile") || ($0.label ?? "").lowercased().contains("iphone") } ?? c.phoneNumbers.first
+            if let m = mobile { return (full, m.value.stringValue) }
+            if let e = c.emailAddresses.first { return (full, e.value as String) }
+        }
+        return nil
     }
 
     /// Opens a new message in Messages with the text filled in. Onboard never presses Send.

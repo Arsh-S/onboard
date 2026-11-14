@@ -403,10 +403,31 @@ public final class Agent {
             return (ok ? "Scrolled \(text.lowercased().contains("up") ? "up" : "down"); the screen shows new content" : "FAILED: nothing here can scroll further", false)
         case "draft_message":
             let p = text.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
-            let to = p.count > 1 ? p[0] : "", body = p.count > 1 ? p.dropFirst().joined(separator: " | ") : text
-            let ok = await stage?.approve("Draft this message?", detail: "To: \(to.isEmpty ? "(you choose)" : to)\n\n\(body)") ?? true
+            var to = p.count > 1 ? p[0] : "", shown = to
+            let body = p.count > 1 ? p.dropFirst().joined(separator: " | ") : text
+            // A name becomes a real number or address from the Mac's Contacts, so the draft arrives addressed.
+            let isHandle = to.contains("@") || to.filter(\.isNumber).count >= 7
+            if !to.isEmpty, !isHandle, !Tools.dryRun, let c = await Tools.lookupContact(to) { shown = "\(c.name) (\(c.handle))"; to = c.handle }
+            let ok = await stage?.approve("Draft this message?", detail: "To: \(shown.isEmpty ? "(you choose)" : shown)\n\n\(body)") ?? true
             guard ok else { answer = "Okay, I left it."; await stage?.speak(answer); return ("Not approved", true) }
-            let r = Tools.draftMessage(to: to, body: body)
+            var r = Tools.draftMessage(to: to, body: body)
+            let addressed = to.contains("@") || to.filter(\.isNumber).count >= 7
+            if !addressed, !to.isEmpty, !Tools.dryRun, Screen.allowForeground {
+                // Not in Contacts (or no access): type the name into the To field and take the first suggestion.
+                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                if let m = Screen.runningApp("Messages"), await Screen.bringForward(m), let snap = Screen.snapshot(m),
+                   let field = snap.elements.first(where: { $0.role == "field" && ($0.label.lowercased().hasPrefix("to") || $0.label.lowercased().contains("recipient")) }) {
+                    await stage?.glide(to: CGPoint(x: field.frame.midX, y: field.frame.midY), frame: field.frame, thought: "Adding \(to)")
+                    Screen.click(at: CGPoint(x: field.frame.minX + 60, y: field.frame.midY))
+                    try? await Task.sleep(nanoseconds: 250_000_000)
+                    Screen.type(to)
+                    try? await Task.sleep(nanoseconds: 1_100_000_000)
+                    Screen.key(36)
+                    try? await Task.sleep(nanoseconds: 400_000_000)
+                    let now = Screen.visibleText(m)
+                    r = now.lowercased().contains(to.lowercased()) ? "Verified: a message to \(to) is drafted in Messages, not sent." : "Messages is open with the text drafted, but I could not confirm \(to) was added as the recipient."
+                }
+            } else if addressed, shown != to { r = "Verified: a message to \(shown) is drafted in Messages, not sent." }
             await summarizeAfter(r.replacingOccurrences(of: "Verified: ", with: "")); return (r, true)
         case "draft_email":
             let p = text.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
