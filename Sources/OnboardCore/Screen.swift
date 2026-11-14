@@ -294,12 +294,49 @@ public enum Screen {
         return NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier
     }
 
+    static let appAliases: [String: String] = [
+        "imessage": "Messages", "imessages": "Messages", "message": "Messages", "texts": "Messages", "text messages": "Messages",
+        "chrome": "Google Chrome", "google": "Google Chrome", "vscode": "Visual Studio Code", "vs code": "Visual Studio Code", "code": "Visual Studio Code",
+        "settings": "System Settings", "system preferences": "System Settings", "preferences": "System Settings",
+        "email": "Mail", "mail app": "Mail", "browser": "Safari", "files": "Finder", "file manager": "Finder",
+        "word": "Microsoft Word", "excel": "Microsoft Excel", "powerpoint": "Microsoft PowerPoint", "spreadsheet": "Numbers", "text editor": "TextEdit",
+        "app store": "App Store", "facetime": "FaceTime", "music app": "Music", "photos app": "Photos", "terminal app": "Terminal",
+    ]
+    static let appDirs = ["/Applications", "/System/Applications", "/System/Applications/Utilities", "/Applications/Utilities", NSHomeDirectory() + "/Applications"]
+
+    /// Installed app names (without .app).
+    public static func installedApps() -> [String: String] {
+        var out: [String: String] = [:]
+        for d in appDirs {
+            for f in (try? FileManager.default.contentsOfDirectory(atPath: d)) ?? [] where f.hasSuffix(".app") {
+                out[String(f.dropLast(4))] = d + "/" + f
+            }
+        }
+        return out
+    }
+
+    /// Find the app someone means: nicknames ("iMessage", "Chrome"), then exact, then closest installed name.
+    public static func resolveApp(_ raw: String) -> (name: String, path: String)? {
+        var q = raw.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        for suffix in [" app", " application", ".app"] where q.hasSuffix(suffix) { q = String(q.dropLast(suffix.count)) }
+        if q.hasPrefix("the ") { q = String(q.dropFirst(4)) }
+        let apps = installedApps()
+        let wanted = (appAliases[q] ?? q).lowercased()
+        if let hit = apps.first(where: { $0.key.lowercased() == wanted }) { return (hit.key, hit.value) }
+        let near = apps.filter { $0.key.lowercased().hasPrefix(wanted) || $0.key.lowercased().contains(wanted) || wanted.contains($0.key.lowercased()) }
+        return near.min { abs($0.key.count - wanted.count) < abs($1.key.count - wanted.count) }.map { ($0.key, $0.value) }
+    }
+
+    public static func similarApps(_ raw: String) -> [String] {
+        let q = raw.lowercased().prefix(3)
+        return installedApps().keys.filter { $0.lowercased().contains(q) }.sorted().prefix(6).map { $0 }
+    }
+
     @discardableResult public static func open(_ name: String) async -> NSRunningApplication? {
-        if let a = runningApp(name) { _ = await bringForward(a); return a }
-        let paths = ["/Applications/\(name).app", "/System/Applications/\(name).app", "/System/Applications/Utilities/\(name).app"]
-        guard let path = paths.first(where: { FileManager.default.fileExists(atPath: $0) }) else { return nil }
-        _ = try? await NSWorkspace.shared.openApplication(at: URL(fileURLWithPath: path), configuration: NSWorkspace.OpenConfiguration())
-        for _ in 0..<30 { if let a = runningApp(name), Screen.snapshot(a) != nil { return a }; try? await Task.sleep(nanoseconds: 150_000_000) }
-        return runningApp(name)
+        guard let app = resolveApp(name) else { return nil }
+        if let a = runningApp(app.name) { _ = await bringForward(a); return a }
+        _ = try? await NSWorkspace.shared.openApplication(at: URL(fileURLWithPath: app.path), configuration: NSWorkspace.OpenConfiguration())
+        for _ in 0..<30 { if let a = runningApp(app.name), Screen.snapshot(a) != nil { return a }; try? await Task.sleep(nanoseconds: 150_000_000) }
+        return runningApp(app.name)
     }
 }

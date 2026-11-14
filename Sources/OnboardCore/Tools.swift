@@ -58,5 +58,19 @@ public enum Tools {
         return "Draft opened in Mail (not sent)"
     }
 
+    /// Opens a new message in Messages with the text filled in. Onboard never presses Send.
+    /// `to` may be a phone number or email; anything else (a name) leaves the recipient for the owner to pick.
+    public static func draftMessage(to: String, body: String) -> String {
+        let t = to.trimmingCharacters(in: .whitespaces)
+        let direct = t.contains("@") || t.filter(\.isNumber).count >= 7
+        var allowed = CharacterSet.urlQueryAllowed; allowed.remove(charactersIn: "&+=?")
+        let b = body.addingPercentEncoding(withAllowedCharacters: allowed) ?? ""
+        let r = direct ? (t.addingPercentEncoding(withAllowedCharacters: allowed) ?? "") : ""
+        guard let u = URL(string: "sms:\(r)&body=\(b)") else { return "FAILED: could not build the message" }
+        if dryRun { return "Message draft opened in Messages (not sent)" }
+        NSWorkspace.shared.open(u)
+        return direct ? "Verified: a message to \(t) is drafted in Messages, not sent." : "Verified: Messages is open with the text drafted. \(t.isEmpty ? "No recipient yet" : "Choose \(t) as the recipient"); it is not sent."
+    }
+
     public static func openFile(_ url: URL) -> String { NSWorkspace.shared.open(url) ? "Opened \(url.lastPathComponent)" : "Could not open \(url.lastPathComponent)" }
 }

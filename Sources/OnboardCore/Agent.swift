@@ -53,7 +53,7 @@ public final class Agent {
 
     public func cancel() { cancelled = true }
 
-    static let actions = ["answer", "point", "click", "type", "menu", "key", "open_app", "search_memory", "add_reminder", "add_event", "draft_email"]
+    static let actions = ["answer", "point", "click", "type", "menu", "key", "open_app", "search_memory", "add_reminder", "add_event", "draft_email", "draft_message"]
 
     var system: String {
         """
@@ -75,6 +75,7 @@ public final class Agent {
         - search_memory: look in \(owner)'s notes, manuals and files on this Mac. text = search words. Do this before answering questions about facts, procedures, people or past notes.
         - add_reminder: text = title | when        - add_event: text = title | when
         - draft_email: text = recipient | subject | body   (opens a draft; \(owner) sends it)
+        - draft_message: text = recipient | message   (opens a text message or iMessage draft in Messages; \(owner) sends it). Use this for texting someone.
 
         Rules:
         - Only use element numbers that appear on the screen.
@@ -99,6 +100,7 @@ public final class Agent {
         (after Terminal is open and in front) -> {"plan":"Type the flush command","action":"type","target":0,"text":"sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder"}
         (after the command was typed) -> {"plan":"Run it","action":"key","target":0,"text":"return"}
         (after the terminal showed Password:) -> {"plan":"Report back","action":"answer","target":0,"text":"I ran the flush command. The terminal is asking for your password to finish."}
+        open iMessage and draft a message to Mom saying I'll be late -> {"plan":"Draft the message","action":"draft_message","target":0,"text":"Mom | I'll be late"}
         remind me to call Sam tomorrow at 9 -> {"plan":"Add the reminder","action":"add_reminder","target":0,"text":"Call Sam | tomorrow 9am"}
         Answer only with the JSON object.
         """
@@ -318,7 +320,15 @@ public final class Agent {
             return ("Pressed \(name)", false)
         case "open_app":
             stage?.thought(say.isEmpty ? "Opening \(text)" : say)
-            guard let a = await Screen.open(text) else { return ("There is no app named \(text)", false) }
+            // Headless checks never launch anything: they only report what would open.
+            if !Screen.allowForeground {
+                guard let r = Screen.resolveApp(text) else { return ("FAILED: there is no app named \(text).", false) }
+                return ("(dry run) \(r.name) would open", false)
+            }
+            guard let a = await Screen.open(text) else {
+                let near = Screen.similarApps(text)
+                return ("FAILED: there is no app named \(text)." + (near.isEmpty ? "" : " Installed apps with similar names: \(near.joined(separator: ", ")).") + " Do not search memory for apps.", false)
+            }
             target = a
             return ("\(a.localizedName ?? text) is open and in front", false)
         case "search_memory":
@@ -351,6 +361,13 @@ public final class Agent {
             stage?.thought(say.isEmpty ? "Adding to the calendar" : say)
             let r = await Tools.addEvent(p.first ?? text, when: p.count > 1 ? p[1] : "")
             await summarizeAfter(r); return (r, true)
+        case "draft_message":
+            let p = text.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
+            let to = p.count > 1 ? p[0] : "", body = p.count > 1 ? p.dropFirst().joined(separator: " | ") : text
+            let ok = await stage?.approve("Draft this message?", detail: "To: \(to.isEmpty ? "(you choose)" : to)\n\n\(body)") ?? true
+            guard ok else { answer = "Okay, I left it."; await stage?.speak(answer); return ("Not approved", true) }
+            let r = Tools.draftMessage(to: to, body: body)
+            await summarizeAfter(r.replacingOccurrences(of: "Verified: ", with: "")); return (r, true)
         case "draft_email":
             let p = text.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
             let ok = await stage?.approve("Open this email draft?", detail: "To: \(p.first ?? "")\n\(p.count > 1 ? p[1] : "")\n\n\(p.count > 2 ? p[2] : "")") ?? true
@@ -387,8 +404,10 @@ public final class Agent {
 
     static func isQuestion(_ r: String) -> Bool {
         let l = r.lowercased().trimmingCharacters(in: .whitespaces)
+        // "Can you open...", "Could you draft...", "Please ..." are requests to act, even with a question mark.
+        if ["can you", "could you", "would you", "will you", "please", "go ", "open", "draft", "make", "add", "write", "send", "create", "type", "click"].contains(where: { l.hasPrefix($0) }) { return false }
         if l.hasSuffix("?") { return true }
-        return ["what", "how", "who", "when", "where", "why", "which", "is ", "are ", "does", "do i", "can ", "tell me"].contains { l.hasPrefix($0) }
+        return ["what", "how", "who", "when", "where", "why", "which", "is ", "are ", "does", "do i", "tell me"].contains { l.hasPrefix($0) }
     }
 
     func summarizeAfter(_ result: String) async {
