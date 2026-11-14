@@ -14,13 +14,13 @@ The same holds on Earth for anyone who cannot send their data to a cloud (lawyer
 
 ## What it does
 
-- **Type or talk.** Press Option-Space and type, or hold fn + Control and speak.
+- **Type or talk.** Press Option-Space and type, or hold fn and speak.
 - **Reads the screen as text.** It walks the macOS accessibility tree of the front window. No screenshots, no vision model.
 - **Acts with its own cursor.** A teal cursor glides to the exact button, x-rays the window, clicks and types through the task, and leaves numbered step dots. Your own pointer stays where it was.
 - **Answers out loud**, in one or two short sentences.
 - **Searches your notes and manuals** on disk with local embeddings, and names the file the answer came from.
 - **Asks before risky actions.** An email draft shows an approval card first, and Onboard never presses Send.
-- **Dictates anywhere.** Hold fn and speak into any app.
+- **Dictates anywhere.** Hold  + Control and speak into any app.
 - **Voice lock (in progress).** It will obey only its owner's voice.
 
 ## How it works
@@ -113,8 +113,8 @@ Requires macOS 15 or later on Apple silicon, Xcode command line tools, and [LM S
 | Keys | What happens |
 |---|---|
 | Option-Space | Open the command bar and type a request |
-| Hold fn + Control | Talk to Onboard, release to send |
-| Hold fn | Dictate into whatever app is in front |
+| Hold fn | Talk to Onboard, release to send |
+| Hold  + Control | Dictate into whatever app is in front |
 
 ## Design choices for small models
 

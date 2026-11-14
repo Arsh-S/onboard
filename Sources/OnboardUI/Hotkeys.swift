@@ -19,9 +19,9 @@ enum Hotkeys {
                    keys: ["⌥", "Space"], title: "Open the command bar", hint: "Type what you want done"),
         // keyCode -1: not a Carbon hotkey. These two are driven by the fn (globe) key, see FnKeyMonitor.
         HotkeySpec(action: .talk, keyCode: -1, modifiers: 0,
-                   keys: ["fn", "⌃"], title: "Hold to talk", hint: "Release and Onboard gets to work"),
+                   keys: ["fn"], title: "Hold to talk", hint: "Release and Onboard gets to work"),
         HotkeySpec(action: .dictate, keyCode: -1, modifiers: 0,
-                   keys: ["fn"], title: "Hold to dictate", hint: "Types what you say into your app"),
+                   keys: ["fn", "⌃"], title: "Hold to dictate", hint: "Types what you say into your app"),
     ]
 }
 
@@ -72,7 +72,7 @@ enum Hotkeys {
 }
 
 
-/// Hold fn to dictate, hold fn + control to talk (the Wispr Flow gesture). The fn key is a modifier, so it is
+/// Hold fn to talk to Onboard, hold fn + control to dictate. The fn key is a modifier, so it is
 /// watched through flagsChanged events (needs the Accessibility permission the app already has).
 /// A short grace period lets control join before dictation starts; any other key press cancels (fn + arrows and so on).
 @MainActor final class FnKeyMonitor {
@@ -98,18 +98,18 @@ enum Hotkeys {
         let other = f.contains(.command) || f.contains(.option) || f.contains(.shift)
         if let a = active {
             // Either key lifting ends the hold.
-            if !fn || (a == .talk && !ctrl) { active = nil; HotkeyCenter.shared.fire(a, pressed: false) }
+            if !fn || (a == .dictate && !ctrl) { active = nil; HotkeyCenter.shared.fire(a, pressed: false) }
             return
         }
         cancelPending()
         guard fn, !other else { return }
-        if ctrl { active = .talk; HotkeyCenter.shared.fire(.talk, pressed: true); return }
+        if ctrl { active = .dictate; HotkeyCenter.shared.fire(.dictate, pressed: true); return }
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated {
                 guard let self, self.active == nil else { return }
                 let now = NSEvent.modifierFlags
                 guard now.contains(.function) else { return }
-                let a: HotkeyAction = now.contains(.control) ? .talk : .dictate
+                let a: HotkeyAction = now.contains(.control) ? .dictate : .talk
                 self.active = a; HotkeyCenter.shared.fire(a, pressed: true)
             }
         }
