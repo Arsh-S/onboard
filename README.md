@@ -20,7 +20,7 @@ The same holds on Earth for anyone who cannot send their data to a cloud (lawyer
 - **Answers out loud**, in one or two short sentences.
 - **Searches your notes and manuals** on disk with local embeddings, and names the file the answer came from.
 - **Asks before risky actions.** An email draft shows an approval card first, and Onboard never presses Send.
-- **Dictates anywhere.** Hold  + Control and speak into any app.
+- **Dictates anywhere.** Hold fn + Control and speak into any app.
 - **Voice lock (in progress).** It will obey only its owner's voice.
 
 ## How it works
@@ -114,7 +114,7 @@ Requires macOS 15 or later on Apple silicon, Xcode command line tools, and [LM S
 |---|---|
 | Option-Space | Open the command bar and type a request |
 | Hold fn | Talk to Onboard, release to send |
-| Hold  + Control | Dictate into whatever app is in front |
+| Hold fn + Control | Dictate into whatever app is in front |
 
 ## Design choices for small models
 
