@@ -17,10 +17,11 @@ enum Hotkeys {
     static let all: [HotkeySpec] = [
         HotkeySpec(action: .toggleBar, keyCode: kVK_Space, modifiers: optionKey,
                    keys: ["⌥", "Space"], title: "Open the command bar", hint: "Type what you want done"),
-        HotkeySpec(action: .talk, keyCode: kVK_Space, modifiers: controlKey | optionKey,
-                   keys: ["⌃", "⌥", "Space"], title: "Hold to talk", hint: "Release and Onboard gets to work"),
-        HotkeySpec(action: .dictate, keyCode: kVK_ANSI_D, modifiers: controlKey | optionKey,
-                   keys: ["⌃", "⌥", "D"], title: "Hold to dictate", hint: "Types what you say into your app"),
+        // keyCode -1: not a Carbon hotkey. These two are driven by the fn (globe) key, see FnKeyMonitor.
+        HotkeySpec(action: .talk, keyCode: -1, modifiers: 0,
+                   keys: ["fn", "⌃"], title: "Hold to talk", hint: "Release and Onboard gets to work"),
+        HotkeySpec(action: .dictate, keyCode: -1, modifiers: 0,
+                   keys: ["fn"], title: "Hold to dictate", hint: "Types what you say into your app"),
     ]
 }
 
@@ -51,7 +52,8 @@ enum Hotkeys {
             MainActor.assumeIsolated { HotkeyCenter.shared.dispatch(id, pressed: pressed) }
             return noErr
         }, 2, &specs, nil, nil)
-        for s in Hotkeys.all {
+        FnKeyMonitor.shared.start()
+        for s in Hotkeys.all where s.keyCode >= 0 {
             var ref: EventHotKeyRef?
             let status = RegisterEventHotKey(UInt32(s.keyCode), UInt32(s.modifiers),
                                              EventHotKeyID(signature: OSType(0x4F4E4244), id: s.action.rawValue),
@@ -61,8 +63,57 @@ enum Hotkeys {
         }
     }
 
+    fileprivate func fire(_ a: HotkeyAction, pressed: Bool) { if pressed { onPress?(a) } else { onRelease?(a) } }
+
     private func dispatch(_ id: UInt32, pressed: Bool) {
         guard let a = HotkeyAction(rawValue: id) else { return }
         if pressed { onPress?(a) } else { onRelease?(a) }
+    }
+}
+
+
+/// Hold fn to dictate, hold fn + control to talk (the Wispr Flow gesture). The fn key is a modifier, so it is
+/// watched through flagsChanged events (needs the Accessibility permission the app already has).
+/// A short grace period lets control join before dictation starts; any other key press cancels (fn + arrows and so on).
+@MainActor final class FnKeyMonitor {
+    static let shared = FnKeyMonitor()
+    private var active: HotkeyAction?
+    private var pending: DispatchWorkItem?
+    private var monitors: [Any] = []
+    static let grace = 0.14
+
+    func start() {
+        guard monitors.isEmpty else { return }
+        let flags: (NSEvent) -> Void = { e in MainActor.assumeIsolated { FnKeyMonitor.shared.flagsChanged(e.modifierFlags) } }
+        let keys: (NSEvent) -> Void = { _ in MainActor.assumeIsolated { FnKeyMonitor.shared.cancelPending() } }
+        if let m = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged, handler: flags) { monitors.append(m) }
+        if let m = NSEvent.addGlobalMonitorForEvents(matching: .keyDown, handler: keys) { monitors.append(m) }
+        if let m = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged, handler: { e in flags(e); return e }) { monitors.append(m) }
+    }
+
+    private func cancelPending() { pending?.cancel(); pending = nil }
+
+    private func flagsChanged(_ f: NSEvent.ModifierFlags) {
+        let fn = f.contains(.function), ctrl = f.contains(.control)
+        let other = f.contains(.command) || f.contains(.option) || f.contains(.shift)
+        if let a = active {
+            // Either key lifting ends the hold.
+            if !fn || (a == .talk && !ctrl) { active = nil; HotkeyCenter.shared.fire(a, pressed: false) }
+            return
+        }
+        cancelPending()
+        guard fn, !other else { return }
+        if ctrl { active = .talk; HotkeyCenter.shared.fire(.talk, pressed: true); return }
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.active == nil else { return }
+                let now = NSEvent.modifierFlags
+                guard now.contains(.function) else { return }
+                let a: HotkeyAction = now.contains(.control) ? .talk : .dictate
+                self.active = a; HotkeyCenter.shared.fire(a, pressed: true)
+            }
+        }
+        pending = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.grace, execute: work)
     }
 }
