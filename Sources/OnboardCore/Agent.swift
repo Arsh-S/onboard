@@ -45,7 +45,7 @@ public final class Agent {
     public let memory: MemoryIndex
     public weak var stage: AgentStage?
     public var ownBundle: String? = Bundle.main.bundleIdentifier
-    public var maxSteps = 12
+    public var maxSteps = 14
     /// How many times a failure must be answered with a different attempt before Onboard may say it could not do it.
     public var maxRetries = 3
     private var cancelled = false
@@ -55,173 +55,289 @@ public final class Agent {
 
     public func cancel() { cancelled = true }
 
-    static let actions = ["answer", "point", "click", "type", "menu", "key", "open_app", "search_memory", "add_reminder", "add_event", "draft_email", "list_apps", "show_menu", "scroll"]
+    // MARK: the harness
+    // The loop follows the design shared by browser-use, macOS-use and Agent S: every step the model first judges its
+    // previous step against the fresh screen, keeps a short memory, states one goal, then picks one generic action.
+    // The harness (not the model) computes what changed on screen, counts failures, blocks repeats, and has a separate
+    // judge confirm the result before anything is reported as done.
+
+    static let actions = ["click", "type", "key", "menu", "scroll", "open_app", "wait", "search_memory", "add_reminder", "add_event", "point", "done"]
+    static let changing: Set<String> = ["type", "click", "menu", "key", "open_app", "scroll"]
 
     var system: String {
         """
-        You are Onboard, an assistant that lives on \(owner)'s Mac and works with no internet. You see the screen as text and act with your own cursor.
-        Each step you output ONE JSON object with these fields, in this order:
-        - plan: under 10 words, what this single step does (it is shown to \(owner)).
+        You are Onboard. You operate \(owner)'s Mac for them, offline. You see the app in front as a list of elements and act one step at a time.
+
+        Elements: "[12] button "Save"" can be acted on by its number. A leading * means it appeared since your last step (your action caused it: check whether you need it). Lines starting with - are text on screen: use them to verify outcomes.
+
+        Each step, answer with ONE JSON object, fields in this order:
+        - prev_result: success, failed or unknown. Did your previous step do what you intended? Judge from CHANGES and the screen, not from hope. Use none on the first step.
+        - memory: one short sentence of facts worth keeping: what is done, what is left, names and values found.
+        - next_goal: one sentence saying what this step will do and to which element.
         - action: one of the actions below.
-        - target: an element number from the screen, or 0 when the action needs none.
-        - text: the literal content for the action (see each action). Never put explanations in text.
+        - target: the element number, or 0.
+        - target_label: the label of that element copied exactly, or "".
+        - text: the literal content for the action, or "".
+        - success: only matters for done. true only if the whole task is finished and you can point to proof.
 
         Actions:
-        - answer: finish. text = your spoken reply to \(owner), one or two short sentences.
-        - point: show where something is. target = element number, text = what to do there in one sentence. For "how do I" and "where is" questions.
-        - click: press an element. target = element number, text = "".
-        - type: put words into a document or field. target = the field number (or 0 for the main text area), text = EXACTLY the words to insert, nothing else.
-        - menu: choose a menu bar command. text = the command name, for example "New Note" or "Bold".
-        - key: text = one of: return, tab, escape, save, select all, copy, paste, undo, new.
+        - click: press element target.
+        - type: type text into field target (0 = the focused text area). Only the exact words, nothing else.
+        - key: press a key. text = return, tab, escape, save, select all, copy, paste, undo or new.
+        - menu: choose a menu bar command by name. text = for example "New Window".
+        - scroll: text = down or up. Reveals more elements.
         - open_app: text = the app name.
-        - search_memory: look in \(owner)'s notes, manuals and files on this Mac. text = search words. Do this before answering questions about facts, procedures, people or past notes.
-        - add_reminder: text = title | when        - add_event: text = title | when
-        - draft_email: text = recipient | subject | body   (opens a draft; \(owner) sends it)
-        - list_apps: see which apps are installed. text = a word to filter by, or "" for all.
-        - show_menu: see the commands inside one menu of the app in front. text = the menu name (for example File), or "" to list the menus.
-        - scroll: move the page to see more. text = down or up.
-
-        How to work:
-        - Take ONE small step at a time: one click, or typing into one field. After every step you get a fresh view of the screen. Look at it before deciding the next step.
-        - Never assume a step worked. Read the result and the new screen. If the thing you expected is not there, fix that first.
-        - To type somewhere, name the field number as target. Typing clicks that field first.
-        - When a list of suggestions or search results appears, click the right one before going on.
-        - Never send or submit for \(owner): do not press return in a message or email, and do not click Send. Leave the draft ready and say so.
+        - wait: the screen is still loading.
+        - search_memory: look in \(owner)'s notes, manuals and files on this Mac. text = search words.
+        - add_reminder: text = title | when.    - add_event: text = title | when.
+        - point: show \(owner) where element target is. text = one sentence of guidance. Ends the task. For "where is" and "how do I" questions.
+        - done: finish. text = what to tell \(owner), one or two short spoken sentences. Set success honestly.
 
         Rules:
-        - Only use element numbers that appear on the screen.
-        - Never invent facts. Use search_memory or what the screen says.
-        - Each result line under "Steps so far" is the truth about what happened. Results starting with "Verified" worked. Results starting with "FAILED" did not: try another way or tell \(owner) honestly that it did not work.
-        - Never say something was done unless a result shows it. A typed terminal command has not run until you press return and read the result.
-        - Do not repeat a step that succeeded.
-        - When a step FAILED, do not give up and do not repeat it: try a different way. Look around first if needed (list_apps, show_menu, scroll), pick another element, use a menu command, or open the right app. Only after three different attempts fail may you answer that it did not work, and say what you tried.
-        - If the request is a question ("what", "how", "why", "what do I do"), never change anything on screen: find the facts, then answer with them.
-        - To run a shell command, first use open_app with "Terminal" (never a browser or a menu guess), then type the command, then key return.
-        - In a terminal, type the real shell command, never a description of it. If you are not sure of the exact command, search_memory for it first.
-        - Only type, click or add things when \(owner) asked for that.
-        - As soon as the request is done, use answer and say what you did or found.
+        1. Only use element numbers that are in the list. One action per step.
+        2. Never assume an action succeeded just because you issued it. Check CHANGES and the screen first.
+        3. If you typed into a field, you may still need to pick a suggestion, press return, or click a button to complete it.
+        4. Handle popups, dialogs and suggestion lists before anything else.
+        5. If the same action failed or changed nothing, do something different. Never repeat it.
+        6. Never send, submit, pay or delete for \(owner). Leave drafts ready and say so. A typed terminal command has not run until return is pressed.
+        7. Never invent facts: use search_memory or the screen. For a question about facts, search_memory, then done with the answer.
+        8. If any part of the request is unmet, uncertain or unverifiable, done must have success false and say what is left.
+        9. Use the most direct action. To add text to a document, type into its text area: no clicking, selecting or cursor positioning first. For reminders and calendar events use add_reminder and add_event directly: never open those apps.
 
-        Examples (request -> one step):
-        add a line that says Pump A checked -> {"plan":"Type the line into the document","action":"type","target":0,"text":"Pump A checked"}
-        (after that succeeded) -> {"plan":"Report back","action":"answer","target":0,"text":"Done. I added the line Pump A checked."}
-        how do I make this bold? -> {"plan":"Use the Bold menu command","action":"answer","target":0,"text":"Open the Format menu, choose Font, then Bold."}
-        where is the share button? -> {"plan":"Point at Share","action":"point","target":12,"text":"It's right here, the Share button in the toolbar."}
-        what does the manual say about filter changes? -> {"plan":"Check the manual","action":"search_memory","target":0,"text":"filter change procedure"}
-        (after the search returned the procedure) -> {"plan":"Tell the steps","action":"answer","target":0,"text":"Swap the filter every 30 days: power down the fan, pull the tray, and seat the new one."}
-        open a terminal and flush the DNS cache -> {"plan":"Open the Terminal app","action":"open_app","target":0,"text":"Terminal"}
-        (after Terminal is open and in front) -> {"plan":"Type the flush command","action":"type","target":0,"text":"sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder"}
-        (after the command was typed) -> {"plan":"Run it","action":"key","target":0,"text":"return"}
-        (after the terminal showed Password:) -> {"plan":"Report back","action":"answer","target":0,"text":"I ran the flush command. The terminal is asking for your password to finish."}
-        text Maya that I'm running late (worked out one step at a time, each after seeing the new screen):
-          {"plan":"Open Messages","action":"open_app","target":0,"text":"Messages"}
-          then, seeing a compose button [7]: {"plan":"Start a new message","action":"click","target":7,"text":""}
-          then, seeing the To field [3]: {"plan":"Enter the recipient","action":"type","target":3,"text":"Maya"}
-          then, seeing a suggestion row [12] "Maya Chen": {"plan":"Pick Maya from the suggestions","action":"click","target":12,"text":""}
-          then, seeing the message field [9]: {"plan":"Write the message","action":"type","target":9,"text":"I'm running late"}
-          then: {"plan":"Report back","action":"answer","target":0,"text":"Your message to Maya is drafted and ready. I did not send it."}
-        remind me to call Sam tomorrow at 9 -> {"plan":"Add the reminder","action":"add_reminder","target":0,"text":"Call Sam | tomorrow 9am"}
-        Answer only with the JSON object.
+        Examples (one step each):
+        TASK: add a line that says Pump A checked. ELEMENTS: [3] field "(unnamed field)" = "Log..."
+        {"prev_result":"none","memory":"Need to add one line to the open document.","next_goal":"Type the line into the document text area","action":"type","target":3,"target_label":"(unnamed field)","text":"Pump A checked","success":false}
+        Next step, after CHANGES shows the value now ends with Pump A checked:
+        {"prev_result":"success","memory":"The line Pump A checked is in the document.","next_goal":"Report that it is done","action":"done","target":0,"target_label":"","text":"I added the line Pump A checked to your document.","success":true}
+        TASK: remind me to call Sam tomorrow at 9.
+        {"prev_result":"none","memory":"A reminder is needed.","next_goal":"Add the reminder","action":"add_reminder","target":0,"target_label":"","text":"Call Sam | tomorrow 9am","success":false}
+        TASK: what does the manual say about filter changes?
+        {"prev_result":"none","memory":"Need the filter procedure from the notes.","next_goal":"Search the notes","action":"search_memory","target":0,"target_label":"","text":"filter change procedure","success":false}
+        TASK: what does this document say? (the answer is already on screen)
+        {"prev_result":"none","memory":"The document text is visible.","next_goal":"Answer from the screen","action":"done","target":0,"target_label":"","text":"It says the pump was checked on Sol 211 and pressure is nominal.","success":true}
+        TASK: how do I make this bold? (a question about how: explain or point, do not do it)
+        {"prev_result":"none","memory":"The user wants to know how, not for me to do it.","next_goal":"Explain where Bold is","action":"done","target":0,"target_label":"","text":"Select the text, then open the Format menu, choose Font, and pick Bold.","success":true}
+        TASK: text Maya that I'm late. ELEMENTS after typing Maya in the To field: *[12] row "Maya Chen" ...
+        {"prev_result":"success","memory":"Messages is open, new message started, typed Maya; a suggestion appeared.","next_goal":"Pick Maya Chen from the suggestions","action":"click","target":12,"target_label":"Maya Chen","text":"","success":false}
+        JSON only.
         """
     }
 
+    struct Trail { var goal: String; var action: String; var result: String }
+    public var usePlan = false
+    private var plan: [String] = []
+    private var planDone = 0
+    private var memoryNote = ""
+    private var trail: [Trail] = []
+    private var lastResult = ""
+    private var consecutiveFailures = 0
+    private var blocked: Set<String> = []
+    private var judgeRejections = 0
+    private var firstScreen = ""
+
     func history() -> String {
-        steps.isEmpty ? "(none)" : steps.map { "- \($0.action)(\($0.detail.prefix(80))) -> \($0.result.prefix(1300))" }.joined(separator: "\n")
+        trail.isEmpty ? "(none)" : trail.enumerated().map { "\($0.offset + 1). \($0.element.goal) -> \($0.element.action) -> \($0.element.result.prefix(200))" }.joined(separator: "\n")
+    }
+
+    /// Elements as the model sees them, with * on the ones that were not there at the last step.
+    func render(_ snap: ScreenSnapshot, previous: Set<String>) -> String {
+        var out = ""
+        for e in snap.elements.filter({ $0.id > 0 }).prefix(70) {
+            let isNew = !previous.isEmpty && !previous.contains(e.role + "|" + e.label)
+            out += "\(isNew ? "*" : "")[\(e.id)] \(e.role) \"\(e.label.prefix(60))\"" + (e.value.isEmpty ? "" : " = \"\(e.value.prefix(70))\"") + "\n"
+        }
+        var chars = 0
+        for t in snap.elements.filter({ $0.id == 0 }) where chars < 900 { out += "- \"\(t.label.prefix(160))\"\n"; chars += min(t.label.count, 160) }
+        return out
+    }
+
+    static func keys(of snap: ScreenSnapshot?) -> Set<String> { Set((snap?.elements ?? []).filter { $0.id > 0 }.map { $0.role + "|" + $0.label }) }
+
+    /// What changed on screen between two looks, computed by the harness so the model cannot fool itself.
+    static func changes(_ a: ScreenSnapshot?, _ b: ScreenSnapshot?) -> String {
+        guard let a, let b else { return "CHANGES: unknown" }
+        if a.app != b.app { return "CHANGES: now in \(b.app), window \"\(b.window)\"" }
+        let ka = keys(of: a), kb = keys(of: b)
+        let added = kb.subtracting(ka), removed = ka.subtracting(kb)
+        var parts: [String] = []
+        if a.window != b.window { parts.append("window is now \"\(b.window)\"") }
+        if !added.isEmpty { parts.append("+\(added.count) new (" + added.prefix(4).map { $0.split(separator: "|").last.map(String.init) ?? "" }.joined(separator: ", ") + ")") }
+        if !removed.isEmpty { parts.append("-\(removed.count) removed") }
+        for e in b.elements where e.id > 0 && e.role == "field" {
+            if let old = a.elements.first(where: { $0.role == "field" && $0.label == e.label }), old.value != e.value { parts.append("value of \"\(e.label.prefix(30))\" is now \"\(e.value.prefix(50))\"") }
+        }
+        let ta = Set(a.elements.filter { $0.id == 0 }.map(\.label)), tb = Set(b.elements.filter { $0.id == 0 }.map(\.label))
+        let newText = tb.subtracting(ta)
+        if !newText.isEmpty { parts.append("new text: " + newText.prefix(2).map { "\"\($0.prefix(60))\"" }.joined(separator: ", ")) }
+        return parts.isEmpty ? "CHANGES: none" : "CHANGES: " + parts.joined(separator: "; ")
+    }
+
+    /// A short list of subgoals for tasks that take several steps (skipped for questions and one-liners).
+    func makePlan(_ req: String, screen: String) async {
+        plan = []; planDone = 0
+        // Off by default: for a small model an upfront plan invents needless steps ("position the cursor", "open Reminders")
+        // and then follows them. The per-step memory and goal carry progress instead.
+        guard usePlan, !Self.isQuestion(req), req.split(separator: " ").count > 3 else { return }
+        let schema = "{\"type\":\"object\",\"properties\":{\"subgoals\":{\"type\":\"array\",\"items\":{\"type\":\"string\",\"maxLength\":70},\"minItems\":1,\"maxItems\":6}},\"required\":[\"subgoals\"],\"additionalProperties\":false}"
+        let sys = "You plan tasks for an assistant that operates a Mac by clicking, typing and choosing menu commands. Break the request into 1 to 6 short subgoals in order. Each is one visible outcome (for example: Messages is open; a new message is started; the recipient is chosen; the text is written). Use as few as possible: adding text to the open document, setting a reminder, or answering from notes is ONE subgoal. Never add subgoals for positioning the cursor, selecting, or opening an app that is already in front. Do not include verification steps. Do not include sending or submitting unless asked. JSON only."
+        if let r = try? await bonsai.json(system: sys, user: "Request: \(req)\nApp in front: \(screen.prefix(200))\nJSON: subgoals.", schemaJSON: schema, maxTokens: 150),
+           let g = r.json["subgoals"] as? [String] { plan = g.filter { !$0.isEmpty } }
+    }
+
+    func planText() -> String {
+        plan.isEmpty ? "(single step)" : plan.enumerated().map { ($0.offset < planDone ? "[x] " : $0.offset == planDone ? "[>] " : "[ ] ") + $0.element }.joined(separator: "\n")
     }
 
     public func run(_ text: String, app: NSRunningApplication? = nil) async {
         let req = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !req.isEmpty, !running else { return }
         running = true; cancelled = false; request = req; steps = []; answer = ""; lastVerdict = ""
+        trail = []; memoryNote = ""; lastResult = "(nothing yet)"; consecutiveFailures = 0; blocked = []; judgeRejections = 0
         let t0 = now()
         defer { running = false; turnSecs = now() - t0; stage?.rest(); writeRunLog() }
         target = app ?? Screen.targetApp(excluding: ownBundle)
-        var first = true
-        var retries = 0
-        var nudge = ""
-        for _ in 0..<maxSteps {
+
+        var snap: ScreenSnapshot? = target.flatMap { Screen.snapshot($0) }
+        lastSnapshot = snap
+        if let s = snap { await stage?.scan(window: s.windowFrame, elements: s.elements.filter { $0.role != "text" }) }
+        firstScreen = snap.map { render($0, previous: []) } ?? "(no window)"
+        await makePlan(req, screen: snap.map { "\($0.app), window \"\($0.window)\"" } ?? "nothing")
+        var previousKeys: Set<String> = []
+        var stale = 0
+
+        for stepNo in 1...maxSteps {
             if cancelled { answer = "Stopped."; return }
-            // Fresh look at the screen every step.
-            // Follow the user's screen: if a different app came to the front (opened by a step, or by the user), work there.
-            if Screen.allowForeground, let f = Screen.targetApp(excluding: ownBundle), f.processIdentifier != target?.processIdentifier, !steps.isEmpty { target = f }
-            var snap: ScreenSnapshot?
-            if let t = target { snap = Screen.snapshot(t, menusFrom: lastSnapshot); lastSnapshot = snap }
-            if first, let s = snap { await stage?.scan(window: s.windowFrame, elements: s.elements.filter { $0.role != "text" }); first = false }
-            let screen = snap?.text() ?? "(no app window is open)"
-            // The model may only name elements that are really on screen.
+            // Follow the screen: a different app in front (opened by a step, or by the user) becomes the one we work in.
+            if Screen.allowForeground, let f = Screen.targetApp(excluding: ownBundle), f.processIdentifier != target?.processIdentifier, stepNo > 1 { target = f }
+            let before = snap
+            snap = target.flatMap { Screen.snapshot($0, menusFrom: lastSnapshot) }
+            lastSnapshot = snap
+            let diff = stepNo == 1 ? "CHANGES: (first step)" : Self.changes(before, snap)
+            stale = diff == "CHANGES: none" ? stale + 1 : 0
+
             let ids = [0] + (snap?.elements.filter { $0.id > 0 }.map(\.id) ?? [])
-            let actionList = Self.actions.map { "\"\($0)\"" }.joined(separator: ",")
-            let schema = "{\"type\":\"object\",\"properties\":{\"plan\":{\"type\":\"string\"},\"action\":{\"type\":\"string\",\"enum\":[\(actionList)]},\"target\":{\"type\":\"integer\",\"enum\":[\(ids.map(String.init).joined(separator: ","))]},\"text\":{\"type\":\"string\"}},\"required\":[\"plan\",\"action\",\"target\",\"text\"],\"additionalProperties\":false}"
+            let lastStep = stepNo == maxSteps || consecutiveFailures >= 5
+            let allowed = lastStep ? ["done"] : Self.actions
+            let schema = "{\"type\":\"object\",\"properties\":{"
+                + "\"prev_result\":{\"type\":\"string\",\"enum\":[\"none\",\"success\",\"failed\",\"unknown\"]},"
+                + "\"memory\":{\"type\":\"string\",\"maxLength\":170},\"next_goal\":{\"type\":\"string\",\"maxLength\":110},"
+                + "\"action\":{\"type\":\"string\",\"enum\":[\(allowed.map { "\"\($0)\"" }.joined(separator: ","))]},"
+                + "\"target\":{\"type\":\"integer\",\"enum\":[\(ids.map(String.init).joined(separator: ","))]},"
+                + "\"target_label\":{\"type\":\"string\",\"maxLength\":70},\"text\":{\"type\":\"string\",\"maxLength\":500},\"success\":{\"type\":\"boolean\"}},"
+                + "\"required\":[\"prev_result\",\"memory\",\"next_goal\",\"action\",\"target\",\"target_label\",\"text\",\"success\"],\"additionalProperties\":false}"
+
+            var notes: [String] = []
+            if consecutiveFailures >= 3 { notes.append("REPLAN SUGGESTED: your approach is not working. Choose a different way to reach the goal.") }
+            if stale >= 3 { notes.append("Your actions might not be having the intended effect: the screen has not changed for \(stale) steps.") }
+            if !blocked.isEmpty { notes.append("BLOCKED (they did nothing, do not use them): " + blocked.sorted().joined(separator: "; ")) }
+            if stepNo >= maxSteps * 3 / 4 && !lastStep { notes.append("You are running out of steps. Finish what matters and use done.") }
+            if lastStep { notes.append("This is the last step. Use done and report honestly what was and was not achieved.") }
             let hints = snap.map { Screen.menuHints($0, for: req) } ?? []
-            let user = "Screen right now:\n\(screen)\nMenu commands that may help: \(hints.isEmpty ? "(none match)" : hints.joined(separator: "; "))\n\nRequest from \(owner): \(req)\n\nSteps so far:\n\(history())\(nudge)\n\nNow: \(Date().formatted(date: .complete, time: .shortened)). Next step as JSON (plan, action, target, text)."
-            guard let r = try? await bonsai.json(system: system, user: user, schemaJSON: schema, maxTokens: 170) else {
+            let user = """
+            TASK: \(req)\(plan.isEmpty ? "" : "\nPLAN:\n" + planText())
+            MEMORY: \(memoryNote.isEmpty ? "(empty)" : memoryNote)
+            LAST STEPS:
+            \(history())
+            LAST RESULT: \(lastResult)
+            \(diff)
+            \(notes.joined(separator: "\n"))
+            APP: \(snap?.app ?? "none"). WINDOW: "\(snap?.window ?? "")"
+            ELEMENTS:
+            \(snap.map { render($0, previous: previousKeys) } ?? "(no window is open)")
+            Menu commands that may help: \(hints.isEmpty ? "(none)" : hints.prefix(10).joined(separator: "; "))
+            Time: \(Date().formatted(date: .abbreviated, time: .shortened)). Step \(stepNo) of \(maxSteps).
+            """
+            previousKeys = Self.keys(of: snap)
+
+            guard let r = try? await bonsai.json(system: system, user: user, schemaJSON: schema, maxTokens: 260) else {
                 answer = "I can't reach Bonsai. Is LM Studio running?"; await stage?.speak(answer); return
             }
-            let action = r.json["action"] as? String ?? "answer"
-            var tid = r.json["target"] as? Int ?? 0
-            let txt = (r.json["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            let say = (r.json["plan"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             promptTokens = r.promptTokens
+            let action = r.json["action"] as? String ?? "done"
+            var tid = r.json["target"] as? Int ?? 0
+            let label = (r.json["target_label"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let txt = (r.json["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let goal = (r.json["next_goal"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let prev = r.json["prev_result"] as? String ?? "unknown"
+            if let m = r.json["memory"] as? String, !m.isEmpty { memoryNote = m }
+            // The model's verdict on its previous step moves the plan forward.
+            if prev == "success", stepNo > 1, planDone < plan.count, diff != "CHANGES: none" { planDone += 1 }
 
-            let lastFailed = steps.last.map { $0.result.hasPrefix("FAILED") || $0.result.contains("nothing visibly changed") } ?? false
-            let detail = tid > 0 ? "#\(tid) \(txt)" : txt
-            let repeatsFailure = action != "answer" && steps.contains { $0.action == action && $0.detail == detail && ($0.result.hasPrefix("FAILED") || $0.id == steps.last?.id) }
-            // Persistence: after a failure, answering or repeating the same step is not accepted until other ways were tried.
-            if (action == "answer" && lastFailed || repeatsFailure) && retries < maxRetries {
-                retries += 1
-                stage?.thought("That did not work, trying another way")
-                nudge = "\n\nIMPORTANT: your last attempt did not work and you may not give up yet (attempt \(retries) of \(maxRetries)). Do something DIFFERENT now: another action, another element, a menu command, or look around with list_apps, show_menu or scroll. Do not answer and do not repeat \(steps.last?.action ?? "the last step")(\(steps.last?.detail.prefix(40) ?? ""))."
-                continue
-            }
-            nudge = ""
-            if action == "answer" {
-                let proposed = txt.isEmpty ? (say.isEmpty ? "Done." : say) : txt
-                answer = await verified(req, proposed: proposed)
+            if action == "done" {
+                let claimed = r.json["success"] as? Bool ?? false
+                let (ok, reply, reason) = await judge(req, proposed: txt.isEmpty ? goal : txt, claimed: claimed, final: snap)
+                if !ok && claimed && judgeRejections < 1 && !lastStep {
+                    // Claimed done but the judge disagrees: tell it why, once, and let it finish the job.
+                    judgeRejections += 1
+                    lastResult = "CHECK FAILED: the task is not done yet. \(reason)"
+                    trail.append(Trail(goal: "report done", action: "done", result: lastResult)); if trail.count > 3 { trail.removeFirst() }
+                    continue
+                }
+                lastVerdict = ok ? "done" : "not_done"
+                answer = reply
                 await stage?.speak(answer); return
             }
-            // Still repeating after all retries: stop and report honestly.
-            if let last = steps.last, last.action == action, last.detail == detail { break }
-            if tid > 0, let t = target, let old = snap?.element(tid), let fresh = Screen.snapshot(t, menusFrom: snap) {
-                if fresh.signature != snap?.signature, let moved = fresh.relocate(old) { tid = moved.id; snap = fresh; lastSnapshot = fresh }
+
+            // Wrong-element guard: the label the model meant must match the number it gave. If another element has that
+            // exact label, use that one; otherwise reject the step.
+            if tid > 0, !label.isEmpty, let el = snap?.element(tid) {
+                let a = el.label.lowercased(), b = label.lowercased()
+                if !(a.contains(b) || b.contains(a)) {
+                    if let right = snap?.elements.first(where: { $0.id > 0 && $0.label.lowercased() == b }) { tid = right.id }
+                    else {
+                        consecutiveFailures += 1
+                        lastResult = "ERROR: element [\(tid)] is \"\(el.label.prefix(50))\", not \"\(label.prefix(50))\". Nothing was done. Pick the number of the element you mean."
+                        trail.append(Trail(goal: goal, action: "\(action) [\(tid)]", result: lastResult)); if trail.count > 3 { trail.removeFirst() }
+                        continue
+                    }
+                }
             }
-            var step = AgentStep(action: action, detail: tid > 0 ? "#\(tid) \(txt)" : txt, say: say, secs: r.secs)
+            let signature = "\(action) " + (tid > 0 ? "[\(tid)] \"\(snap?.element(tid)?.label.prefix(40) ?? "")\"" : "\"\(txt.prefix(40))\"")
+            if blocked.contains(signature) {
+                consecutiveFailures += 1
+                lastResult = "ERROR: \(signature) is blocked because it did nothing before. Choose a different action or element."
+                continue
+            }
+            // The screen may have moved while the model was thinking: find the same control again.
+            if tid > 0, let t = target, let old = snap?.element(tid), let fresh = Screen.snapshot(t, menusFrom: snap),
+               fresh.signature != snap?.signature, let moved = fresh.relocate(old) { tid = moved.id; snap = fresh; lastSnapshot = fresh }
+
+            var step = AgentStep(action: action, detail: tid > 0 ? "\(snap?.element(tid)?.label.prefix(50) ?? "#\(tid)")" + (txt.isEmpty ? "" : " · \(txt.prefix(60))") : txt, say: goal)
             if let el = snap?.element(tid) { step.frame = el.frame; step.point = CGPoint(x: el.frame.midX, y: el.frame.midY) }
+            step.secs = r.secs
             steps.append(step)
             let tA = now()
-            let (result, finish) = await perform(action, tid, txt, say, snap, &step)
-            step.result = result; step.secs += now() - tA; step.done = true
-            steps[steps.count - 1] = step
-            if finish { return }
-        }
-        await summarize(req)
-    }
+            var (result, finish) = await perform(action, tid, txt, goal, snap, &step)
+            if finish { step.result = result; step.secs += now() - tA; step.done = true; steps[steps.count - 1] = step; return }
 
-    func summarize(_ req: String) async {
-        let schema: [String: Any] = ["type": "object", "properties": ["say": ["type": "string"]], "required": ["say"], "additionalProperties": false]
-        let r = try? await bonsai.json(system: "You are Onboard, \(owner)'s assistant. Answer only in JSON.",
-                                       user: "Request: \(req)\nWhat you did and found (this really happened):\n\(history())\n\nTell \(owner) the result in one or two short spoken sentences, using only what is above. JSON: say.", schema: schema, maxTokens: 100)
-        answer = await verified(req, proposed: (r?.json["say"] as? String) ?? "Done.")
+            // What actually happened, as seen on screen.
+            let after = (Screen.allowForeground ? (Screen.targetApp(excluding: ownBundle) ?? target) : target).flatMap { Screen.snapshot($0, menusFrom: snap) }
+            let effect = Self.changes(snap, after)
+            let failed = result.hasPrefix("FAILED") || result.hasPrefix("ERROR")
+            if Self.changing.contains(action) {
+                if failed { consecutiveFailures += 1 }
+                else if effect == "CHANGES: none" && !result.hasPrefix("Verified") {
+                    consecutiveFailures += 1
+                    result += " But nothing changed on screen."
+                    if trail.last?.action == signature { blocked.insert(signature) }
+                } else { consecutiveFailures = 0 }
+            } else if failed { consecutiveFailures += 1 } else { consecutiveFailures = 0 }
+            lastResult = (failed ? "" : "OK ") + result.prefix(700)
+            step.result = String(result.prefix(300)); step.secs += now() - tA; step.done = true
+            steps[steps.count - 1] = step
+            trail.append(Trail(goal: goal, action: signature, result: String(result.prefix(200)))); if trail.count > 3 { trail.removeFirst() }
+        }
+        // Out of steps without a done.
+        let (_, reply, _) = await judge(req, proposed: "I ran out of steps.", claimed: false, final: lastSnapshot)
+        lastVerdict = "not_done"; answer = reply
         await stage?.speak(answer)
     }
 
-    /// Every run is written to Application Support/Onboard/runs/last.txt (and a dated copy) so mistakes can be diagnosed.
-    func writeRunLog() {
-        let dir = URL(fileURLWithPath: NSHomeDirectory() + "/Library/Application Support/Onboard/runs")
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        var out = "Request: \(request)\nApp: \(target?.localizedName ?? "none")\nTime: \(Date())  turn \(String(format: "%.1f", turnSecs))s  verdict: \(lastVerdict)\n\n"
-        for (i, s) in steps.enumerated() { out += "\(i + 1). \(s.action)(\(s.detail))  [\(String(format: "%.1f", s.secs))s]  plan: \(s.say)\n   -> \(s.result)\n" }
-        out += "\nAnswer: \(answer)\n\nLast screen the model saw:\n\(lastSnapshot?.text() ?? "(none)")\n"
-        try? out.write(to: dir.appendingPathComponent("last.txt"), atomically: true, encoding: .utf8)
-        let f = DateFormatter(); f.dateFormat = "MMdd_HHmmss"
-        try? out.write(to: dir.appendingPathComponent(f.string(from: Date()) + ".txt"), atomically: true, encoding: .utf8)
-    }
-
-    static let changing: Set<String> = ["type", "click", "menu", "key", "open_app"]
-
-    /// Check the work before reporting: re-read the screen, compare it with the request and the step results, and let a
-    /// strict second pass write the reply. The actor's own "done" is never trusted on its own.
-    func verified(_ req: String, proposed: String) async -> String {
+    /// A separate strict pass decides whether the task is really done, from the request, the action log, and the
+    /// first and final screens. Returns (done, what to tell the owner, why not).
+    func judge(_ req: String, proposed: String, claimed: Bool, final: ScreenSnapshot?) async -> (Bool, String, String) {
         let acted = steps.filter { Self.changing.contains($0.action) }
-        guard !acted.isEmpty else { return proposed }                      // pure questions have nothing to verify on screen
+        guard !acted.isEmpty else { return (claimed, proposed, "") }             // nothing was changed on screen: nothing to verify there
         var check = AgentStep(action: "verify", detail: "Re-reading the screen", say: "Checking my work")
         steps.append(check)
         stage?.thought("Checking my work")
@@ -229,43 +345,48 @@ public final class Agent {
         var screen = "(no window)"
         if let app = Screen.allowForeground ? (Screen.targetApp(excluding: ownBundle) ?? target) : target, let snap = Screen.snapshot(app, menusFrom: lastSnapshot) {
             await stage?.scan(window: snap.windowFrame, elements: snap.elements.filter { $0.role != "text" })
-            let full = Screen.visibleText(app)
-            screen = snap.text(maxActions: 25, maxText: 500) + "\nLatest text in the window:\n" + String(full.suffix(700))
+            screen = "App: \(snap.app). Window: \"\(snap.window)\"\n" + String(render(snap, previous: []).prefix(1500)) + "\nLatest text in the window:\n" + String(Screen.visibleText(app).suffix(600))
         }
-        // Hard facts the model cannot talk its way around.
         var facts: [String] = []
         let typedCommand = acted.contains { $0.action == "type" && $0.result.contains("NOT run yet") }
         let ran = acted.contains { $0.result.hasPrefix("Ran it") }
         if typedCommand && !ran { facts.append("A command was typed but never run (return was not pressed).") }
-        let failures = acted.filter { $0.result.hasPrefix("FAILED") }
-        if !failures.isEmpty { facts.append("\(failures.count) step(s) failed: " + failures.map { $0.result.prefix(110) }.joined(separator: " | ")) }
-        if acted.allSatisfy({ $0.result.hasPrefix("FAILED") || $0.result.contains("nothing visibly changed") }) { facts.append("No step had a confirmed effect.") }
-
-        let schema = "{\"type\":\"object\",\"properties\":{\"evidence\":{\"type\":\"string\"},\"verdict\":{\"type\":\"string\",\"enum\":[\"done\",\"partly\",\"not_done\"]},\"reply\":{\"type\":\"string\"}},\"required\":[\"evidence\",\"verdict\",\"reply\"],\"additionalProperties\":false}"
+        let failures = acted.filter { $0.result.hasPrefix("FAILED") || $0.result.hasPrefix("ERROR") }
+        if !failures.isEmpty { facts.append("\(failures.count) step(s) failed: " + failures.suffix(2).map { String($0.result.prefix(110)) }.joined(separator: " | ")) }
+        let log = steps.filter { $0.action != "verify" }.enumerated().map { "\($0.offset + 1). \($0.element.action)(\($0.element.detail.prefix(60))) -> \($0.element.result.prefix(160))" }.joined(separator: "\n")
+        let schema = "{\"type\":\"object\",\"properties\":{\"evidence\":{\"type\":\"string\",\"maxLength\":140},\"verdict\":{\"type\":\"boolean\"},\"failure_reason\":{\"type\":\"string\",\"maxLength\":160},\"reply\":{\"type\":\"string\",\"maxLength\":260}},\"required\":[\"evidence\",\"verdict\",\"failure_reason\",\"reply\"],\"additionalProperties\":false}"
         let sys = """
-        You are a strict checker for an assistant that operates a Mac for \(owner). Judge only from the evidence: the step results and what is on screen now.
-        - done: the screen or a result proves the request was fully carried out.
-        - partly: some of it happened. not_done: it did not happen, or there is no proof.
-        A typed command that was never run is not done. Text typed into the wrong place (for example a browser address bar) is not done. If the terminal shows Password: the command is waiting for a password, which is partly.
-        evidence: under 20 words, what proves your verdict. reply: one or two short spoken sentences to \(owner) saying honestly what happened and, if not done, what is left. JSON only.
+        You are a strict judge of an assistant that operates a Mac for \(owner). Decide whether the task was really completed, from the action log and the final screen only. Check whether each action the assistant tried actually happened.
+        verdict is true only if the final screen or a result proves every part of the task. If anything is unmet, uncertain or unverifiable, verdict is false.
+        A typed command that was never run is not done. Text in the wrong place is not done. A draft that is ready but not sent counts as done when the task was to draft.
+        evidence: what on the final screen proves your verdict. failure_reason: what is missing ("" if done). reply: one or two short spoken sentences telling \(owner) honestly what happened and what is left. JSON only.
         """
-        let user = "Request: \(req)\n\nSteps and results:\n\(history())\n\nKnown facts:\n\(facts.isEmpty ? "(none)" : facts.joined(separator: "\n"))\n\nScreen now:\n\(screen)\n\nThe assistant wants to say: \"\(proposed)\"\n\nJSON: evidence, verdict, reply."
-        var verdict = "done", reply = proposed, evidence = ""
-        if let r = try? await bonsai.json(system: sys, user: user, schemaJSON: schema, maxTokens: 150) {
-            verdict = r.json["verdict"] as? String ?? "done"
+        let user = "TASK: \(req)\n\nACTION LOG:\n\(log)\n\nKNOWN FACTS:\n\(facts.isEmpty ? "(none)" : facts.joined(separator: "\n"))\n\nSCREEN AT THE START:\n\(firstScreen.prefix(700))\n\nSCREEN NOW:\n\(screen)\n\nThe assistant says (claims \(claimed ? "success" : "failure")): \"\(proposed)\"\n\nJSON: evidence, verdict, failure_reason, reply."
+        var ok = claimed, reply = proposed, reason = "", evidence = ""
+        if let r = try? await bonsai.json(system: sys, user: user, schemaJSON: schema, maxTokens: 200) {
+            ok = (r.json["verdict"] as? Bool ?? false) && claimed
             evidence = r.json["evidence"] as? String ?? ""
+            reason = r.json["failure_reason"] as? String ?? ""
             if let rp = r.json["reply"] as? String, !rp.isEmpty { reply = rp }
         }
-        // The hard facts win over the model.
-        if !facts.isEmpty && verdict == "done" {
-            verdict = "not_done"
-            reply = typedCommand && !ran ? "I typed the command but it has not run yet, so the task is not finished." : "That did not work: " + (failures.first.map { String($0.result.dropFirst(8).prefix(120)) } ?? "I could not confirm any change on screen.")
-        }
-        check.result = (verdict == "done" ? "Confirmed" : verdict == "partly" ? "Partly done" : "Not done") + (evidence.isEmpty ? "" : ": " + evidence)
+        if !facts.isEmpty && ok { ok = false; reason = facts.joined(separator: " ") }
+        if !ok && reason.isEmpty { reason = "There is no proof on screen that it is finished." }
+        check.result = (ok ? "Confirmed" : "Not done") + ": " + (ok ? evidence : reason)
         check.secs = now() - t0; check.done = true
         if let i = steps.firstIndex(where: { $0.id == check.id }) { steps[i] = check }
-        lastVerdict = verdict
-        return reply
+        return (ok, reply, reason)
+    }
+
+    /// Every run is written to Application Support/Onboard/runs/last.txt (and a dated copy) so mistakes can be diagnosed.
+    func writeRunLog() {
+        let dir = URL(fileURLWithPath: NSHomeDirectory() + "/Library/Application Support/Onboard/runs")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        var out = "Request: \(request)\nApp: \(target?.localizedName ?? "none")\nTime: \(Date())  turn \(String(format: "%.1f", turnSecs))s  verdict: \(lastVerdict)\nPlan:\n\(planText())\nMemory: \(memoryNote)\n\n"
+        for (i, s) in steps.enumerated() { out += "\(i + 1). \(s.action)(\(s.detail))  [\(String(format: "%.1f", s.secs))s]  goal: \(s.say)\n   -> \(s.result)\n" }
+        out += "\nAnswer: \(answer)\n\nLast screen the model saw:\n\(lastSnapshot.map { render($0, previous: []) } ?? "(none)")\n"
+        try? out.write(to: dir.appendingPathComponent("last.txt"), atomically: true, encoding: .utf8)
+        let f = DateFormatter(); f.dateFormat = "MMdd_HHmmss"
+        try? out.write(to: dir.appendingPathComponent(f.string(from: Date()) + ".txt"), atomically: true, encoding: .utf8)
     }
 
     static let terminals: Set<String> = ["Terminal", "iTerm2", "iTerm", "Ghostty", "Warp", "kitty", "Alacritty", "cmux"]
@@ -274,7 +395,12 @@ public final class Agent {
 
     /// Returns (result text for the model, whether the request is finished).
     func perform(_ action: String, _ tid: Int, _ text: String, _ say: String, _ snap: ScreenSnapshot?, _ step: inout AgentStep) async -> (String, Bool) {
+        if action == "click", tid == 0 { return ("ERROR: click needs an element number as target.", false) }
         switch action {
+        case "wait":
+            stage?.thought(say.isEmpty ? "Waiting for the screen" : say)
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            return ("Waited", false)
         case "point":
             guard let el = snap?.element(tid) else { return ("There is no element \(tid) on screen", false) }
             await stage?.glide(to: CGPoint(x: el.frame.midX, y: el.frame.midY), frame: el.frame, thought: el.label)

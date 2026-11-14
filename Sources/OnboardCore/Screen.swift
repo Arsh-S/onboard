@@ -350,7 +350,7 @@ public enum Screen {
         "word": "Microsoft Word", "excel": "Microsoft Excel", "powerpoint": "Microsoft PowerPoint", "spreadsheet": "Numbers", "text editor": "TextEdit",
         "app store": "App Store", "facetime": "FaceTime", "music app": "Music", "photos app": "Photos", "terminal app": "Terminal",
     ]
-    static let appDirs = ["/Applications", "/System/Applications", "/System/Applications/Utilities", "/Applications/Utilities", NSHomeDirectory() + "/Applications"]
+    static let appDirs = ["/System/Library/CoreServices", "/Applications", "/System/Applications", "/System/Applications/Utilities", "/Applications/Utilities", NSHomeDirectory() + "/Applications"]
 
     /// Installed app names (without .app).
     public static func installedApps() -> [String: String] {
