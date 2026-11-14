@@ -18,12 +18,12 @@ public enum Theme {
         Color(red: 0.18, green: 0.83, blue: 0.75), Color(red: 0.24, green: 0.72, blue: 0.90), Color(red: 0.42, green: 0.58, blue: 0.98),
         Color(red: 0.24, green: 0.72, blue: 0.90), Color(red: 0.18, green: 0.83, blue: 0.75),
     ]
-    /// A point on the spectrum, 0...1 wrapping.
+    /// A point on the palette, 0...1 wrapping. Plain arithmetic on a small table: this runs thousands of times a frame.
+    static let prismRGB: [(Double, Double, Double)] = [(0.18, 0.83, 0.75), (0.24, 0.72, 0.90), (0.42, 0.58, 0.98), (0.24, 0.72, 0.90), (0.18, 0.83, 0.75)]
     public static func prism(_ t: Double) -> Color {
-        let x = (t - t.rounded(.down)) * Double(prism.count - 1), i = Int(x), f = x - Double(i)
-        let a = NSColor(prism[i]).usingColorSpace(.sRGB)!, b = NSColor(prism[min(i + 1, prism.count - 1)]).usingColorSpace(.sRGB)!
-        return Color(red: a.redComponent + (b.redComponent - a.redComponent) * f, green: a.greenComponent + (b.greenComponent - a.greenComponent) * f,
-                     blue: a.blueComponent + (b.blueComponent - a.blueComponent) * f)
+        let x = (t - t.rounded(.down)) * Double(prismRGB.count - 1), i = min(Int(x), prismRGB.count - 2), f = x - Double(i)
+        let a = prismRGB[i], b = prismRGB[i + 1]
+        return Color(red: a.0 + (b.0 - a.0) * f, green: a.1 + (b.1 - a.1) * f, blue: a.2 + (b.2 - a.2) * f)
     }
     public static let spring = Animation.spring(response: 0.35, dampingFraction: 0.85)
     public static let snappy = Animation.spring(response: 0.25, dampingFraction: 1.0)
@@ -46,12 +46,11 @@ public struct PrismBorder<S: InsettableShape>: View {
     var active: Bool
     public init(_ shape: S, lineWidth: CGFloat = 1.5, glow: CGFloat = 6, active: Bool = true) { self.shape = shape; self.lineWidth = lineWidth; self.glow = glow; self.active = active }
     public var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !active)) { tl in
+        TimelineView(.animation(minimumInterval: 1.0 / 20, paused: !active)) { tl in
             let angle = Angle.degrees(tl.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 6) * 60)
             let g = AngularGradient(colors: Theme.prism, center: .center, angle: angle)
             ZStack {
-                shape.strokeBorder(g, lineWidth: lineWidth * 1.5).blur(radius: glow).opacity(0.35)
-                shape.strokeBorder(g, lineWidth: lineWidth).opacity(0.75)
+                shape.strokeBorder(g, lineWidth: lineWidth).opacity(0.8)
             }
         }
         .opacity(active ? 1 : 0)

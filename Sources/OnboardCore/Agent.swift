@@ -111,8 +111,10 @@ public final class Agent {
         for _ in 0..<maxSteps {
             if cancelled { answer = "Stopped."; return }
             // Fresh look at the screen every step.
+            // Follow the user's screen: if a different app came to the front (opened by a step, or by the user), work there.
+            if Screen.allowForeground, let f = Screen.targetApp(excluding: ownBundle), f.processIdentifier != target?.processIdentifier, !steps.isEmpty { target = f }
             var snap: ScreenSnapshot?
-            if let t = target { snap = Screen.snapshot(t); lastSnapshot = snap }
+            if let t = target { snap = Screen.snapshot(t, menusFrom: lastSnapshot); lastSnapshot = snap }
             if first, let s = snap { await stage?.scan(window: s.windowFrame, elements: s.elements.filter { $0.role != "text" }); first = false }
             let screen = snap?.text() ?? "(no app window is open)"
             // The model may only name elements that are really on screen.
@@ -125,7 +127,7 @@ public final class Agent {
                 answer = "I can't reach Bonsai. Is LM Studio running?"; await stage?.speak(answer); return
             }
             let action = r.json["action"] as? String ?? "answer"
-            let tid = r.json["target"] as? Int ?? 0
+            var tid = r.json["target"] as? Int ?? 0
             let txt = (r.json["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             let say = (r.json["plan"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             promptTokens = r.promptTokens
@@ -136,6 +138,9 @@ public final class Agent {
             }
             // The same step twice means it is stuck: summarize and stop.
             if let last = steps.last, last.action == action, last.detail == (tid > 0 ? "#\(tid) \(txt)" : txt) { break }
+            if tid > 0, let t = target, let old = snap?.element(tid), let fresh = Screen.snapshot(t, menusFrom: snap) {
+                if fresh.signature != snap?.signature, let moved = fresh.relocate(old) { tid = moved.id; snap = fresh; lastSnapshot = fresh }
+            }
             var step = AgentStep(action: action, detail: tid > 0 ? "#\(tid) \(txt)" : txt, say: say, secs: r.secs)
             if let el = snap?.element(tid) { step.frame = el.frame; step.point = CGPoint(x: el.frame.midX, y: el.frame.midY) }
             steps.append(step)
@@ -175,7 +180,7 @@ public final class Agent {
             await stage?.glide(to: p, frame: el.frame, thought: say.isEmpty ? "Clicking \(el.label)" : say)
             await stage?.click(at: p)
             let ok = Screen.press(snap, id: tid)
-            try? await Task.sleep(nanoseconds: 450_000_000)
+            await settle(snap)
             return (ok ? "Clicked \(el.label)" : "Could not click \(el.label)", false)
         case "type":
             guard let app = target else { return ("No app to type into", false) }
@@ -215,7 +220,7 @@ public final class Agent {
             await stage?.glide(to: barPoint, frame: nil, thought: say.isEmpty ? path : say)
             await stage?.click(at: barPoint)
             let ok = Screen.pressMenu(snap, path: path)
-            try? await Task.sleep(nanoseconds: 600_000_000)
+            await settle(snap)
             return (ok ? "Chose \(path)" : "Could not choose \(path)", false)
         case "key":
             let name = Self.keys.keys.sorted { $0.count > $1.count }.first { text.lowercased().contains($0) } ?? ""
@@ -229,7 +234,7 @@ public final class Agent {
             }
             guard await Screen.bringForward(app) else { return ("Could not bring the app forward", false) }
             Screen.key(k.0, command: k.1)
-            try? await Task.sleep(nanoseconds: 350_000_000)
+            await settle(snap)
             return ("Pressed \(text)", false)
         case "open_app":
             stage?.thought(say.isEmpty ? "Opening \(text)" : say)
@@ -274,6 +279,19 @@ public final class Agent {
             await summarizeAfter(r); return (r, true)
         default:
             return ("Unknown action \(action)", false)
+        }
+    }
+
+    /// Wait until the screen reacts to an action and stops changing (at most about a second), instead of a fixed pause.
+    func settle(_ before: ScreenSnapshot?) async {
+        guard let t = target, let before else { try? await Task.sleep(nanoseconds: 300_000_000); return }
+        var last = before.signature, changed = false
+        for _ in 0..<8 {
+            try? await Task.sleep(nanoseconds: 130_000_000)
+            // A new app in front counts as a change.
+            if Screen.allowForeground, let f = Screen.targetApp(excluding: ownBundle), f.processIdentifier != t.processIdentifier { return }
+            guard let now = Screen.snapshot(t, limit: 1500, menusFrom: before) else { continue }
+            if now.signature != last { changed = true; last = now.signature } else if changed { return }
         }
     }
 

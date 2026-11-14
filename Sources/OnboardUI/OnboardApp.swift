@@ -38,6 +38,7 @@ public enum OnboardApp {
         model.onNeedSettings = { [weak self] in self?.settings.show() }
 
         let keys = HotkeyCenter.shared
+        FnKeyMonitor.shared.onSwitchToDictate = { [weak self] in self?.model.switchToDictate() }
         keys.onPress = { [weak self] action in
             guard let self else { return }
             switch action {

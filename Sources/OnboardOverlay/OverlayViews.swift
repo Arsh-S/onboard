@@ -22,7 +22,6 @@ struct OverlayRoot: View {
         ZStack(alignment: .topLeading) {
             DimLayer(model: model)
             TakeoverLayer(model: model, now: now)
-            EdgeGlow(model: model, now: now)
             EffectsLayer(model: model, now: now)
             StepsLayer(model: model)
             CursorLayer(model: model, now: now)
@@ -207,30 +206,29 @@ struct CursorArrow: View {
 struct TakeoverLayer: View {
     let model: OverlayModel
     let now: Date
-    static let life = 1.15, cell = 30.0
+    static let life = 0.9, cell = 40.0, band = 220.0
     var body: some View {
         let start = model.takeover, origin = model.tip, size = model.screen, reduce = model.reduceMotion
-        Canvas { ctx, _ in
+        Canvas(opaque: false, rendersAsynchronously: true) { ctx, _ in
             guard let start, !reduce else { return }
             let t = now.timeIntervalSince(start)
             guard t >= 0, t < Self.life else { return }
             let reach = hypot(max(origin.x, size.width - origin.x), max(origin.y, size.height - origin.y))
-            let front = Motion.easeOut(t / Self.life) * (reach + 260)
+            let front = Motion.easeOut(t / Self.life) * (reach + Self.band)
+            // Three brightness bands, each filled as one path: a few draw calls a frame instead of thousands.
+            var paths = [Path(), Path(), Path()]
             let cols = Int(size.width / Self.cell) + 1, rows = Int(size.height / Self.cell) + 1
             for r in 0..<rows {
                 for c in 0..<cols {
                     let x = (Double(c) + 0.5) * Self.cell, y = (Double(r) + 0.5) * Self.cell
-                    let d = hypot(x - origin.x, y - origin.y)
-                    let behind = front - d
-                    guard behind > 0, behind < 260 else { continue }
-                    // Bright at the wave front, fading behind it; a cheap hash makes the pixels sparkle unevenly.
-                    let jitter = Double((c &* 73 &+ r &* 151) % 17) / 17
-                    let a = pow(1 - behind / 260, 2) * (0.35 + 0.65 * jitter)
-                    let s = 2.0 + 5.0 * (1 - behind / 260)
-                    let hue = Theme.prism(d / 1400)
-                    ctx.fill(Path(roundedRect: CGRect(x: x - s / 2, y: y - s / 2, width: s, height: s), cornerRadius: 1.5), with: .color(hue.opacity(0.26 * a)))
+                    let behind = front - hypot(x - origin.x, y - origin.y)
+                    guard behind > 0, behind < Self.band else { continue }
+                    let k = 1 - behind / Self.band
+                    let s = 2.0 + 4.0 * k
+                    paths[min(2, Int(k * 3))].addRect(CGRect(x: x - s / 2, y: y - s / 2, width: s, height: s))
                 }
             }
+            for (i, p) in paths.enumerated() { ctx.fill(p, with: .color(Theme.accent.opacity([0.05, 0.12, 0.22][i]))) }
         }
         .onChange(of: now) { if let s = model.takeover, now.timeIntervalSince(s) > Self.life { model.takeover = nil } }
     }

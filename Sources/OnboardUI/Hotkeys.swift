@@ -93,12 +93,16 @@ enum Hotkeys {
 
     private func cancelPending() { pending?.cancel(); pending = nil }
 
+    /// Called when control joins while fn is already held: the hold becomes dictation.
+    var onSwitchToDictate: (() -> Void)?
+
     private func flagsChanged(_ f: NSEvent.ModifierFlags) {
         let fn = f.contains(.function), ctrl = f.contains(.control)
         let other = f.contains(.command) || f.contains(.option) || f.contains(.shift)
         if let a = active {
-            // Either key lifting ends the hold.
-            if !fn || (a == .dictate && !ctrl) { active = nil; HotkeyCenter.shared.fire(a, pressed: false) }
+            if fn && ctrl && a == .talk { active = .dictate; onSwitchToDictate?(); return }   // control arrived late
+            // Letting go of fn ends the hold (control may lift first or last, it does not matter).
+            if !fn { active = nil; HotkeyCenter.shared.fire(a, pressed: false) }
             return
         }
         cancelPending()

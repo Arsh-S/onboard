@@ -90,7 +90,8 @@ struct ScanPass: Sendable {
     var reduceMotion = false
 
     /// The frame clock only runs while something is on screen.
-    var animating: Bool { cursorVisible || scan != nil || !ripples.isEmpty || takeover != nil }
+    /// A resting cursor does not need the frame clock (it only bobs 2 points); everything else does.
+    var animating: Bool { (cursorVisible && (mode != .idle || flight != nil)) || scan != nil || !ripples.isEmpty || takeover != nil }
 
     func set(_ m: CursorMode, at now: Date = Date()) { if m != mode { mode = m; modeSince = now } }
 

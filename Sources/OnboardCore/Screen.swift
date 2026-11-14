@@ -43,6 +43,20 @@ public final class ScreenSnapshot: @unchecked Sendable {
     }
 
     public func element(_ id: Int) -> UIElement? { elements.first { $0.id == id } }
+
+    /// Changes whenever the window's content changes (used to wait for the screen to settle after an action).
+    public var signature: Int {
+        var h = Hasher()
+        h.combine(window); h.combine(elements.count)
+        for e in elements { h.combine(e.role); h.combine(e.label); h.combine(e.value); h.combine(Int(e.frame.minX)); h.combine(Int(e.frame.minY)) }
+        return h.finalize()
+    }
+
+    /// The same control in a newer snapshot: same role and label, nearest to where it was.
+    public func relocate(_ old: UIElement) -> UIElement? {
+        let c = elements.filter { $0.id > 0 && $0.role == old.role && $0.label == old.label }
+        return c.min { hypot($0.frame.midX - old.frame.midX, $0.frame.midY - old.frame.midY) < hypot($1.frame.midX - old.frame.midX, $1.frame.midY - old.frame.midY) }
+    }
 }
 
 public enum Screen {
@@ -76,7 +90,8 @@ public enum Screen {
         "AXCell": "cell", "AXRow": "row", "AXSlider": "slider", "AXDisclosureTriangle": "button", "AXTab": "tab", "AXStaticText": "text", "AXHeading": "text",
     ]
 
-    public static func snapshot(_ app: NSRunningApplication, limit: Int = 5000) -> ScreenSnapshot? {
+    /// `menusFrom`: reuse the menu bar from an earlier snapshot of the same app (walking the menus is the slow part).
+    public static func snapshot(_ app: NSRunningApplication, limit: Int = 5000, menusFrom old: ScreenSnapshot? = nil) -> ScreenSnapshot? {
         let t0 = CFAbsoluteTimeGetCurrent()
         let root = AXUIElementCreateApplication(app.processIdentifier)
         AXUIElementSetMessagingTimeout(root, 1.5)
@@ -112,7 +127,9 @@ public enum Screen {
         }
         // Menu bar: every enabled item as a path. Menus are the most reliable way to drive a Mac app.
         var menus: [String] = []; var menuRefs: [String: AXUIElement] = [:]; var titleFrames: [String: CGRect] = [:]
-        if let bar = attr(root, kAXMenuBarAttribute) {
+        if let old, old.pid == app.processIdentifier, !old.menus.isEmpty {
+            menus = old.menus; menuRefs = old.menuRefs; titleFrames = old.menuTitleFrames
+        } else if let bar = attr(root, kAXMenuBarAttribute) {
             func walk(_ e: AXUIElement, _ path: [String], _ depth: Int) {
                 guard depth < 5, menus.count < 700 else { return }
                 for c in (attr(e, kAXChildrenAttribute) as? [AXUIElement]) ?? [] {
@@ -216,6 +233,7 @@ public enum Screen {
             var c = ch
             let d = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: true), u = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: false)
             d?.keyboardSetUnicodeString(stringLength: 1, unicodeString: &c); u?.keyboardSetUnicodeString(stringLength: 1, unicodeString: &c)
+            d?.flags = []; u?.flags = []      // never inherit held modifiers (fn or control still down would turn text into shortcuts)
             d?.post(tap: .cghidEventTap); u?.post(tap: .cghidEventTap)
             usleep(9_000)
         }

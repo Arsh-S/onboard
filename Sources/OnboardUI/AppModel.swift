@@ -260,6 +260,12 @@ final class AppModel {
         }
     }
 
+    /// fn was held first and control joined a moment later: keep the same recording, treat it as dictation.
+    func switchToDictate() {
+        guard recording == .talk else { return }
+        recording = .dictate
+    }
+
     func endVoice(_ mode: VoiceMode) {
         guard recording == mode else { return }
         recording = nil
@@ -322,6 +328,12 @@ final class AppModel {
             let front = NSWorkspace.shared.frontmostApplication
             guard front?.processIdentifier != ProcessInfo.processInfo.processIdentifier else { setPill(.idle); return }   // never into Onboard
             Task.detached {
+                // Wait for fn and control to be physically released, so the text is not typed as shortcuts.
+                for _ in 0..<25 {
+                    let f = await MainActor.run { NSEvent.modifierFlags }
+                    if !f.contains(.control) && !f.contains(.function) { break }
+                    try? await Task.sleep(nanoseconds: 40_000_000)
+                }
                 try? await Task.sleep(nanoseconds: 60_000_000)
                 Screen.type(text + " ")
             }
