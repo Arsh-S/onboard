@@ -44,6 +44,7 @@ final class AppModel {
     var notes = 0
     var indexing = false
     var axTrusted = Screen.trusted
+    var eyesGranted = Eyes.permitted
     var micGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
     var hotkeyFailures: Set<UInt32> = []
 
@@ -108,6 +109,7 @@ final class AppModel {
         OverlayStage.shared.onSpeak = { [weak self] text in await self?.say(text) }
         loadModels()
         reindex()
+        Eyes.warm()
         Task { await checkBonsai(measure: true) }
         pathMonitor.pathUpdateHandler = { [weak self] path in
             let up = path.status == .satisfied && (path.usesInterfaceType(.wifi) || path.usesInterfaceType(.wiredEthernet))
@@ -124,6 +126,7 @@ final class AppModel {
         ticks += 1
         let ax = Screen.trusted
         if ax != axTrusted { axTrusted = ax }
+        if ticks % 5 == 0 { let e = Eyes.permitted; if e != eyesGranted { eyesGranted = e } }
         let mic = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
         if mic != micGranted { micGranted = mic }
         // Keep trying to find LM Studio until it is there (cheap), without disturbing a running turn.
@@ -182,6 +185,12 @@ final class AppModel {
     func requestAccessibility() {
         _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
         axTrusted = Screen.trusted
+    }
+
+    /// Screen Recording lets Onboard take a picture of a window: a backup sense, and the visual check of its own work.
+    func requestEyes() {
+        if !Eyes.requestPermission(), let u = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") { NSWorkspace.shared.open(u) }
+        eyesGranted = Eyes.permitted
     }
 
     func requestMicrophone() {

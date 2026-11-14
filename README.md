@@ -15,7 +15,8 @@ The same holds on Earth for anyone who cannot send their data to a cloud (lawyer
 ## What it does
 
 - **Type or talk.** Press Option-Space and type, or hold fn and speak.
-- **Reads the screen as text.** It walks the macOS accessibility tree of the front window. No screenshots, no vision model.
+- **Reads the screen as text.** It walks the macOS accessibility tree of the front window, which is exact and fast.
+- **Has eyes as a backup.** When an app exposes almost nothing, Onboard takes a picture of the window, reads the text in it with Apple's on-device recognizer, and clicks what it read. Before it says a task is done, Bonsai 2 9B looks at a picture of the window (its vision tower, loaded locally) and confirms the result is really there.
 - **Acts with its own cursor.** A teal cursor glides to the exact button, x-rays the window, clicks and types through the task, and leaves numbered step dots. Your own pointer stays where it was.
 - **Answers out loud**, in one or two short sentences.
 - **Searches your notes and manuals** on disk with local embeddings, and names the file the answer came from.
@@ -92,7 +93,7 @@ Requires macOS 15 or later on Apple silicon, Xcode command line tools, and [LM S
 2. Load them and start the local server:
 
    ```sh
-   lms load ternary-bonsai-2-9b --identifier bonsai2-9b --gpu max -c 8192 -y
+   lms load ternary-bonsai-2-9b --identifier bonsai2-9b --gpu max -c 8192 -y   # put Ternary-Bonsai-2-9B-mmproj-Q8_0.gguf next to the model file for vision
    lms load ternary-bonsai-2-2b --identifier bonsai2-2b --gpu max -c 8192 -y
    lms load text-embedding-nomic-embed-text-v1.5
    lms server start
@@ -104,7 +105,7 @@ Requires macOS 15 or later on Apple silicon, Xcode command line tools, and [LM S
    ./make_app.sh
    ```
 
-4. Open the app from `build/`, then grant **Accessibility** and **Microphone** in System Settings, Privacy and Security. The first launch downloads the WhisperKit and TTSKit models.
+4. Open the app from `build/`, then grant **Accessibility**, **Microphone** and **Screen Recording** in System Settings, Privacy and Security. The first launch downloads the WhisperKit and TTSKit models.
 5. Put notes and manuals (`.md` or `.txt`) in `~/Library/Application Support/Onboard/memory/`.
 6. Turn WiFi off.
 
@@ -120,7 +121,7 @@ Requires macOS 15 or later on Apple silicon, Xcode command line tools, and [LM S
 
 A 9B ternary model can drive a computer if the job is shaped to fit it.
 
-- **Screen as text.** The accessibility tree gives exact labels and frames. The model reads a list of at most 70 elements, not pixels, so no vision model is needed and a decision takes about a second.
+- **Screen as text first, pixels second.** The accessibility tree gives exact labels and frames. The model reads a list of at most 70 elements, so a decision stays fast. Pictures are used where they pay: recognized text fills in for apps with an empty tree (about 0.15 s), and one look by Bonsai's vision tower checks the finished work (about 3 to 5 s).
 - **Fresh grounding every step.** Each step gets a new read of the screen plus a short list of steps so far. The model never has to hold a long conversation or remember what the screen used to look like.
 - **Enum-constrained element ids.** The JSON schema for each step lists only the element numbers on screen right now. The model cannot click something that is not there.
 - **Thinking off.** Bonsai 2 reasons by default and can spend thousands of tokens on it. An empty think block as a prefill turns that off, and the constrained schema carries the structure.
@@ -130,7 +131,7 @@ A 9B ternary model can drive a computer if the job is shaped to fit it.
 ## Limits
 
 - Models download once while online. After that, nothing needs a network.
-- Apps with poor accessibility labels (some Electron apps, canvas-based tools, games) give the model little to read.
+- Apps with poor accessibility labels (some Electron apps, canvas-based tools, games) are driven from recognized text only, so controls that are icons without words stay out of reach.
 - Multi-step tasks are bounded to 8 steps. If the model repeats a step, Onboard stops and summarizes.
 - Voice lock is in progress. Today Onboard answers whoever holds the hotkey.
 - Memory search reads `.md` and `.txt` files only.

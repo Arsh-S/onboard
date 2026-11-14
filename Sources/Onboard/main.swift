@@ -7,6 +7,7 @@ import OnboardUI
 
 let args = CommandLine.arguments
 func opt(_ k: String) -> String? { args.firstIndex(of: k).flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil } }
+_ = NSApplication.shared   // window server connection (needed for pictures of windows)
 let supportDir = URL(fileURLWithPath: NSHomeDirectory() + "/Library/Application Support/Onboard")
 
 if args.count > 2, args[1] == "snap" {
@@ -16,6 +17,27 @@ if args.count > 2, args[1] == "snap" {
         if let q = opt("--menu") { print("menu match:", Screen.findMenu(s, q) ?? "none") }
     } else { print("no window for \(args[2])") }
     exit(0)
+} else if args.count > 2, args[1] == "see" {
+    // What the eyes get from an app's window: recognized text, and Bonsai's answer to a question about the picture.
+    Task { @MainActor in
+        guard let a = Screen.runningApp(args[2]), let s = Screen.snapshot(a) else { print("no window for \(args[2])"); exit(1) }
+        print("screen recording permitted:", Eyes.permitted)
+        var t = CFAbsoluteTimeGetCurrent()
+        guard let img = await Eyes.capture(pid: s.pid, windowFrame: s.windowFrame) else { print("no picture"); exit(1) }
+        print(String(format: "picture %dx%d, %.0f ms", img.width, img.height, (CFAbsoluteTimeGetCurrent() - t) * 1000)); t = CFAbsoluteTimeGetCurrent()
+        let lines = Eyes.readText(img, windowFrame: s.windowFrame)
+        print(String(format: "text: %d lines, %.0f ms", lines.count, (CFAbsoluteTimeGetCurrent() - t) * 1000))
+        t = CFAbsoluteTimeGetCurrent(); _ = Eyes.readText(img, windowFrame: s.windowFrame)
+        print(String(format: "text again (warm): %.0f ms", (CFAbsoluteTimeGetCurrent() - t) * 1000))
+        for l in lines.prefix(25) { print(String(format: "  (%.0f,%.0f) %@", l.frame.midX, l.frame.midY, l.text)) }
+        if let out = opt("--save"), let d = Eyes.jpeg(img) { try? d.write(to: URL(fileURLWithPath: out)) }
+        if let q = opt("--ask"), let d = Eyes.jpeg(img) {
+            let r = try? await Bonsai().json(system: "You look at a picture of a Mac window and answer briefly. JSON only.", user: q, schemaJSON: "{\"type\":\"object\",\"properties\":{\"answer\":{\"type\":\"string\"}},\"required\":[\"answer\"],\"additionalProperties\":false}", maxTokens: 120, image: d)
+            print(String(format: "bonsai (%.1fs, %d prompt tok): %@", r?.secs ?? 0, r?.promptTokens ?? 0, (r?.json["answer"] as? String) ?? "(no answer)"))
+        }
+        exit(0)
+    }
+    dispatchMain()
 } else if args.count > 2, args[1] == "mem" {
     Task { @MainActor in
         let mem = MemoryIndex(folders: [supportDir.appendingPathComponent("memory")], store: supportDir.appendingPathComponent("memory_index.json"))

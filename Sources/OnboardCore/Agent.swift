@@ -68,7 +68,7 @@ public final class Agent {
         """
         You are Onboard. You operate \(owner)'s Mac for them, offline. You see the app in front as a list of elements and act one step at a time.
 
-        Elements: "[12] button "Save"" can be acted on by its number. A leading * means it appeared since your last step (your action caused it: check whether you need it). Lines starting with - are text on screen: use them to verify outcomes.
+        Elements: "[12] button "Save"" can be acted on by its number. A leading * means it appeared since your last step (your action caused it: check whether you need it). Lines starting with - are text on screen: use them to verify outcomes. "[40] seen "Play"" is text read from a picture of the window (the app exposes no controls): click it by number like any other element.
 
         Each step, answer with ONE JSON object, fields in this order:
         - prev_result: success, failed or unknown. Did your previous step do what you intended? Judge from CHANGES and the screen, not from hope. Use none on the first step.
@@ -139,6 +139,16 @@ public final class Agent {
         trail.isEmpty ? "(none)" : trail.enumerated().map { "\($0.offset + 1). \($0.element.goal) -> \($0.element.action) -> \($0.element.result.prefix(200))" }.joined(separator: "\n")
     }
 
+    /// Screenshots as a backup sense: text read from a picture when an app exposes almost nothing, and a picture for the final check.
+    public var useEyes = true
+
+    /// The screen as the model gets it: the accessibility tree, plus text read from a picture of the window when the tree is nearly empty.
+    func look(_ app: NSRunningApplication?, menusFrom old: ScreenSnapshot? = nil) async -> ScreenSnapshot? {
+        guard let app, let snap = Screen.snapshot(app, menusFrom: old) else { return nil }
+        guard useEyes, snap.elements.count < 10, let img = await Eyes.capture(pid: snap.pid, windowFrame: snap.windowFrame) else { return snap }
+        return snap.adding(seen: Eyes.readText(img, windowFrame: snap.windowFrame))
+    }
+
     /// Elements as the model sees them, with * on the ones that were not there at the last step.
     func render(_ snap: ScreenSnapshot, previous: Set<String>) -> String {
         var out = ""
@@ -197,7 +207,7 @@ public final class Agent {
         defer { running = false; turnSecs = now() - t0; stage?.rest(); writeRunLog() }
         target = app ?? Screen.targetApp(excluding: ownBundle)
 
-        var snap: ScreenSnapshot? = target.flatMap { Screen.snapshot($0) }
+        var snap: ScreenSnapshot? = await look(target)
         lastSnapshot = snap
         if let s = snap { await stage?.scan(window: s.windowFrame, elements: s.elements.filter { $0.role != "text" }) }
         firstScreen = snap.map { render($0, previous: []) } ?? "(no window)"
@@ -210,7 +220,7 @@ public final class Agent {
             // Follow the screen: a different app in front (opened by a step, or by the user) becomes the one we work in.
             if Screen.allowForeground, let f = Screen.targetApp(excluding: ownBundle), f.processIdentifier != target?.processIdentifier, stepNo > 1 { target = f }
             let before = snap
-            snap = target.flatMap { Screen.snapshot($0, menusFrom: lastSnapshot) }
+            snap = await look(target, menusFrom: lastSnapshot)
             lastSnapshot = snap
             let diff = stepNo == 1 ? "CHANGES: (first step)" : Self.changes(before, snap)
             stale = diff == "CHANGES: none" ? stale + 1 : 0
@@ -311,7 +321,7 @@ public final class Agent {
             if finish { step.result = result; step.secs += now() - tA; step.done = true; steps[steps.count - 1] = step; return }
 
             // What actually happened, as seen on screen.
-            let after = (Screen.allowForeground ? (Screen.targetApp(excluding: ownBundle) ?? target) : target).flatMap { Screen.snapshot($0, menusFrom: snap) }
+            let after = await look(Screen.allowForeground ? (Screen.targetApp(excluding: ownBundle) ?? target) : target, menusFrom: snap)
             let effect = Self.changes(snap, after)
             let failed = result.hasPrefix("FAILED") || result.hasPrefix("ERROR")
             if Self.changing.contains(action) {
@@ -343,7 +353,9 @@ public final class Agent {
         stage?.thought("Checking my work")
         let t0 = now()
         var screen = "(no window)"
-        if let app = Screen.allowForeground ? (Screen.targetApp(excluding: ownBundle) ?? target) : target, let snap = Screen.snapshot(app, menusFrom: lastSnapshot) {
+        var picture: Data?
+        if let app = Screen.allowForeground ? (Screen.targetApp(excluding: ownBundle) ?? target) : target, let snap = await look(app, menusFrom: lastSnapshot) {
+            if useEyes, let img = await Eyes.capture(pid: snap.pid, windowFrame: snap.windowFrame) { picture = Eyes.jpeg(img) }
             await stage?.scan(window: snap.windowFrame, elements: snap.elements.filter { $0.role != "text" })
             screen = "App: \(snap.app). Window: \"\(snap.window)\"\n" + String(render(snap, previous: []).prefix(1500)) + "\nLatest text in the window:\n" + String(Screen.visibleText(app).suffix(600))
         }
@@ -359,11 +371,12 @@ public final class Agent {
         You are a strict judge of an assistant that operates a Mac for \(owner). Decide whether the task was really completed, from the action log and the final screen only. Check whether each action the assistant tried actually happened.
         verdict is true only if the final screen or a result proves every part of the task. If anything is unmet, uncertain or unverifiable, verdict is false.
         A typed command that was never run is not done. Text in the wrong place is not done. A draft that is ready but not sent counts as done when the task was to draft.
-        evidence: what on the final screen proves your verdict. failure_reason: what is missing ("" if done). reply: one or two short spoken sentences telling \(owner) honestly what happened and what is left. JSON only.
+        \(picture == nil ? "" : "A picture of the window as it looks right now is attached. Look at it: what is visible in the picture outweighs what the log claims.\n        ")evidence: what on the final screen proves your verdict. failure_reason: what is missing ("" if done). reply: one or two short spoken sentences telling \(owner) honestly what happened and what is left. JSON only.
         """
         let user = "TASK: \(req)\n\nACTION LOG:\n\(log)\n\nKNOWN FACTS:\n\(facts.isEmpty ? "(none)" : facts.joined(separator: "\n"))\n\nSCREEN AT THE START:\n\(firstScreen.prefix(700))\n\nSCREEN NOW:\n\(screen)\n\nThe assistant says (claims \(claimed ? "success" : "failure")): \"\(proposed)\"\n\nJSON: evidence, verdict, failure_reason, reply."
         var ok = claimed, reply = proposed, reason = "", evidence = ""
-        if let r = try? await bonsai.json(system: sys, user: user, schemaJSON: schema, maxTokens: 200) {
+        check.detail = picture == nil ? "Re-reading the screen" : "Looking at the screen"
+        if let r = try? await bonsai.json(system: sys, user: user, schemaJSON: schema, maxTokens: 200, image: picture) {
             ok = (r.json["verdict"] as? Bool ?? false) && claimed
             evidence = r.json["evidence"] as? String ?? ""
             reason = r.json["failure_reason"] as? String ?? ""
@@ -413,6 +426,7 @@ public final class Agent {
             await stage?.glide(to: p, frame: el.frame, thought: say.isEmpty ? "Clicking \(el.label)" : say)
             await stage?.click(at: p)
             let ok = Screen.press(snap, id: tid)
+            if snap.seen, ok { try? await Task.sleep(nanoseconds: 700_000_000); return ("Clicked \(el.label)", false) }
             let changed = await settle(snap)
             return (!ok ? "FAILED: could not click \(el.label). Try a menu command for the same thing, or a different element." : changed ? "Clicked \(el.label); the screen changed" : "Clicked \(el.label), but nothing visibly changed. It may not have worked.", false)
         case "type":

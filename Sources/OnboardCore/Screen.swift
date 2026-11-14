@@ -20,6 +20,7 @@ public final class ScreenSnapshot: @unchecked Sendable {
     public let elements: [UIElement]
     public let menus: [String]                 // "Insert > Chart > 2D Column"
     public var menuTitleFrames: [String: CGRect] = [:]   // top-level menu titles in the menu bar
+    public var seen = false                    // includes text read from a picture of the window
     let refs: [Int: AXUIElement]
     let menuRefs: [String: AXUIElement]
     public let secs: Double
@@ -172,7 +173,11 @@ public enum Screen {
     // MARK: actions
 
     @discardableResult public static func press(_ snap: ScreenSnapshot, id: Int) -> Bool {
-        guard let e = snap.refs[id] else { return false }
+        guard let e = snap.refs[id] else {
+            // Read from a picture: there is no control to press, so click where the text is.
+            guard let el = snap.element(id), el.role == "seen" else { return false }
+            click(at: CGPoint(x: el.frame.midX, y: el.frame.midY)); return true
+        }
         if AXUIElementPerformAction(e, kAXPressAction as CFString) == .success { return true }
         // Some controls only respond to a real click.
         if let el = snap.element(id) { click(at: CGPoint(x: el.frame.midX, y: el.frame.midY)); return true }

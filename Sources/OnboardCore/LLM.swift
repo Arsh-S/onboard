@@ -22,15 +22,17 @@ public final class Bonsai: @unchecked Sendable {
 
     /// `schemaJSON` is a raw JSON schema string: property order is kept, and the model writes fields in that order
     /// (a Swift dictionary would shuffle them, and a small model reasons much better when "plan" comes first).
-    public func json(system: String, user: String, schemaJSON: String, maxTokens: Int = 160, small useSmall: Bool = false, temperature: Double = 0.2) async throws -> Reply {
-        try await json(system: system, user: user, schema: ["__raw__": schemaJSON], maxTokens: maxTokens, small: useSmall, temperature: temperature)
+    public func json(system: String, user: String, schemaJSON: String, maxTokens: Int = 160, small useSmall: Bool = false, temperature: Double = 0.2, image: Data? = nil) async throws -> Reply {
+        try await json(system: system, user: user, schema: ["__raw__": schemaJSON], maxTokens: maxTokens, small: useSmall, temperature: temperature, image: image)
     }
 
-    public func json(system: String, user: String, schema: [String: Any], maxTokens: Int = 160, small useSmall: Bool = false, temperature: Double = 0.2) async throws -> Reply {
+    public func json(system: String, user: String, schema: [String: Any], maxTokens: Int = 160, small useSmall: Bool = false, temperature: Double = 0.2, image: Data? = nil) async throws -> Reply {
+        // A picture goes to Bonsai 2 9B, the one with the vision tower.
+        let userContent: Any = image.map { [["type": "text", "text": user], ["type": "image_url", "image_url": ["url": "data:image/jpeg;base64," + $0.base64EncodedString()]]] as [[String: Any]] } ?? user
         let raw = schema["__raw__"] as? String
         var body: [String: Any] = [
-            "model": useSmall ? small : big,
-            "messages": [["role": "system", "content": system], ["role": "user", "content": user]] + (noThink ? [["role": "assistant", "content": "<think>\n\n</think>\n\n"]] : []),
+            "model": useSmall && image == nil ? small : big,
+            "messages": [["role": "system", "content": system], ["role": "user", "content": userContent]] + (noThink ? [["role": "assistant", "content": "<think>\n\n</think>\n\n"]] : []),
             "max_tokens": maxTokens, "temperature": temperature,
             "response_format": ["type": "json_schema", "json_schema": ["name": "out", "strict": true, "schema": raw == nil ? schema : ["__SCHEMA__": 1]]],
         ]

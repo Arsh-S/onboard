@@ -10,6 +10,7 @@ struct SettingsData: Equatable {
     var notes = 0
     var indexing = false
     var axTrusted = false
+    var eyesGranted = false
     var micGranted = false
     var memoryPath = ""
     var speakAnswers = true
@@ -28,6 +29,7 @@ struct SettingsData: Equatable {
 struct SettingsActions {
     var grantAccessibility: () -> Void = {}
     var grantMicrophone: () -> Void = {}
+    var grantEyes: () -> Void = {}
     var openFolder: () -> Void = {}
     var reindex: () -> Void = {}
     var toggleSpeak: () -> Void = {}
@@ -66,6 +68,8 @@ struct SettingsView: View {
                         permissionRow("accessibility", "Accessibility", "See and operate your apps", data.axTrusted, act.grantAccessibility)
                         line
                         permissionRow("mic", "Microphone", "Hear you while you hold a key", data.micGranted, act.grantMicrophone)
+                        line
+                        permissionRow("eye", "Screen Recording", "Look at the screen to check its own work", data.eyesGranted, act.grantEyes)
                     }
                 }
                 .frame(width: 408)
@@ -314,6 +318,7 @@ struct SettingsHost: View {
         SettingsView(data: model.settingsData, owner: $m.owner, icon: icon,
                      act: SettingsActions(grantAccessibility: { model.requestAccessibility() },
                                           grantMicrophone: { model.requestMicrophone() },
+                                          grantEyes: { model.requestEyes() },
                                           openFolder: { model.openMemoryFolder() },
                                           reindex: { model.reindex() },
                                           toggleSpeak: { model.speakAnswers.toggle() },
@@ -327,7 +332,7 @@ struct SettingsHost: View {
 extension AppModel {
     var settingsData: SettingsData {
         SettingsData(hearing: hearing, thinking: thinking, speaking: speaking, tokPerSec: tokPerSec, notes: notes, indexing: indexing,
-                     axTrusted: axTrusted, micGranted: micGranted,
+                     axTrusted: axTrusted, eyesGranted: eyesGranted, micGranted: micGranted,
                      memoryPath: (memoryFolder.path as NSString).abbreviatingWithTildeInPath,
                      speakAnswers: speakAnswers, failedHotkeys: hotkeyFailures,
                      voiceReady: voice.state == .ready, voiceEnrolled: voice.enrolled, voiceEnrolling: voice.enrolling,
