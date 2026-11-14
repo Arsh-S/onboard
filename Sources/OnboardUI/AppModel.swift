@@ -21,8 +21,8 @@ final class AppModel {
     var owner: String { didSet { UserDefaults.standard.set(owner, forKey: Keys.owner); agent.owner = owner.isEmpty ? "you" : owner; applyNames() } }
     var speakAnswers: Bool { didSet { UserDefaults.standard.set(speakAnswers, forKey: Keys.speak) } }
 
-    // Planned: always-listening mode gated to the owner's voice (voice lock). Hooks only for now.
-    var alwaysListening = false
+    /// Voice lock and always-listening (Argmax SpeakerKit).
+    let voice = VoiceLock()
 
     // Core objects.
     let bonsai: Bonsai
@@ -142,6 +142,7 @@ final class AppModel {
         }
         Task.detached(priority: .userInitiated) { [weak self] in
             do {
+                await MainActor.run { [weak self] in self?.wireVoice(base: base) }
                 let s = try await SpeechOut(downloadBase: base)
                 try? await s.warm()
                 await self?.speechLoaded(s)
@@ -269,6 +270,8 @@ final class AppModel {
             Task {
                 var text = ""
                 if samples.count > 4000, let t { text = ((try? await t.transcribe(samples)) ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
+                // Voice lock: a request (not dictation) must come from the owner's voice.
+                if mode == .talk, !text.isEmpty, let self, await !self.voice.isOwner(samples) { await self.notOwner(); return }
                 await self?.heard(text, mode: mode, modelReady: t != nil)
             }
         }
@@ -326,11 +329,30 @@ final class AppModel {
         }
     }
 
-    /// Hook for the planned always-listening mode: called for every utterance heard, with whether the voice lock
-    /// matched the owner. Only the owner's speech may drive the agent.
-    func handleHeard(text: String, isOwner: Bool) {
-        guard isOwner else { return }
-        run(text, app: Screen.targetApp(excluding: Bundle.main.bundleIdentifier))
+    private var voiceWired = false
+    private func wireVoice(base: URL?) {
+        guard !voiceWired else { return }
+        voiceWired = true
+        voice.ownerName = { [weak self] in self?.owner ?? "Owner" }
+        voice.transcriber = { [weak self] in self?.transcriber }
+        voice.canListen = { [weak self] in
+            guard let self else { return false }
+            return self.recording == nil && !self.speakingNow && self.pill != .speaking && !self.agent.running
+        }
+        voice.onCommand = { [weak self] text in
+            guard let self else { return }
+            self.liveTranscript = text; self.setPill(.thinking)
+            self.run(text, app: Screen.targetApp(excluding: Bundle.main.bundleIdentifier))
+        }
+        voice.onRejected = { [weak self] in self?.notOwner() }
+        Task { await voice.load(downloadBase: base) }
+    }
+
+    /// Someone other than the owner tried to give an order.
+    private func notOwner() {
+        liveTranscript = "Voice not recognized"
+        setPill(.thinking)
+        clearPill(after: 1.6)
     }
 
     // MARK: pill

@@ -14,9 +14,9 @@ public enum Theme {
     public static let strongLine = Color.white.opacity(0.14)
     /// Prism spectrum (light split by glass): used for the takeover wave, the edge glow, trails and active borders.
     public static let prism: [Color] = [
-        Color(red: 0.55, green: 0.36, blue: 1.00), Color(red: 0.27, green: 0.55, blue: 1.00), Color(red: 0.18, green: 0.83, blue: 0.86),
-        Color(red: 0.30, green: 0.92, blue: 0.55), Color(red: 1.00, green: 0.85, blue: 0.32), Color(red: 1.00, green: 0.52, blue: 0.36),
-        Color(red: 1.00, green: 0.38, blue: 0.72), Color(red: 0.55, green: 0.36, blue: 1.00),
+        // Deliberately restrained: one cool family (teal to blue to soft indigo), no rainbow.
+        Color(red: 0.18, green: 0.83, blue: 0.75), Color(red: 0.24, green: 0.72, blue: 0.90), Color(red: 0.42, green: 0.58, blue: 0.98),
+        Color(red: 0.24, green: 0.72, blue: 0.90), Color(red: 0.18, green: 0.83, blue: 0.75),
     ]
     /// A point on the spectrum, 0...1 wrapping.
     public static func prism(_ t: Double) -> Color {
@@ -50,8 +50,8 @@ public struct PrismBorder<S: InsettableShape>: View {
             let angle = Angle.degrees(tl.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 6) * 60)
             let g = AngularGradient(colors: Theme.prism, center: .center, angle: angle)
             ZStack {
-                shape.strokeBorder(g, lineWidth: lineWidth * 2).blur(radius: glow).opacity(0.7)
-                shape.strokeBorder(g, lineWidth: lineWidth)
+                shape.strokeBorder(g, lineWidth: lineWidth * 1.5).blur(radius: glow).opacity(0.35)
+                shape.strokeBorder(g, lineWidth: lineWidth).opacity(0.75)
             }
         }
         .opacity(active ? 1 : 0)

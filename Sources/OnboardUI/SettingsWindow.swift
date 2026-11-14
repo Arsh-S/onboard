@@ -14,6 +14,13 @@ struct SettingsData: Equatable {
     var memoryPath = ""
     var speakAnswers = true
     var failedHotkeys: Set<UInt32> = []
+    var voiceReady = true
+    var voiceEnrolled = false
+    var voiceEnrolling = false
+    var voiceProgress = 0.0
+    var voiceMessage = ""
+    var voiceLock = true
+    var alwaysListening = false
 }
 
 struct SettingsActions {
@@ -22,6 +29,9 @@ struct SettingsActions {
     var openFolder: () -> Void = {}
     var reindex: () -> Void = {}
     var toggleSpeak: () -> Void = {}
+    var enrollVoice: () -> Void = {}
+    var toggleLock: () -> Void = {}
+    var toggleAlways: () -> Void = {}
 }
 
 struct SettingsView: View {
@@ -94,6 +104,42 @@ struct SettingsView: View {
                             MiniToggle(isOn: data.speakAnswers, action: act.toggleSpeak)
                         }
                         .padding(.horizontal, 12).frame(height: 46)
+                    }
+                    section("Voice lock") {
+                        HStack(spacing: 10) {
+                            tile("waveform")
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(data.voiceEnrolled ? "Onboard knows your voice" : "Teach Onboard your voice").font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.primary)
+                                Text(data.voiceEnrolling ? "Keep talking… \(Int(data.voiceProgress * 100))%" : data.voiceMessage.isEmpty ? (data.voiceReady ? "8 seconds of you talking. Argmax SpeakerKit, on this Mac." : "Loading the voice model") : data.voiceMessage)
+                                    .font(.system(size: 12)).foregroundStyle(Theme.secondary).lineLimit(2)
+                            }
+                            Spacer()
+                            Button(data.voiceEnrolled ? "Redo" : "Enroll") { act.enrollVoice() }
+                                .buttonStyle(.plain).font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.ink)
+                                .padding(.horizontal, 12).frame(height: 28)
+                                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.accent))
+                                .disabled(!data.voiceReady || data.voiceEnrolling).opacity(!data.voiceReady || data.voiceEnrolling ? 0.5 : 1)
+                        }
+                        .padding(.horizontal, 12).frame(height: 56)
+                        line
+                        HStack(spacing: 10) {
+                            tile("lock")
+                            Text("Only obey my voice").font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.primary)
+                            Spacer()
+                            MiniToggle(isOn: data.voiceLock, action: act.toggleLock)
+                        }
+                        .padding(.horizontal, 12).frame(height: 46)
+                        line
+                        HStack(spacing: 10) {
+                            tile("ear")
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Always listening").font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.primary)
+                                Text("Say \"Onboard, ...\" and it gets to work").font(.system(size: 12)).foregroundStyle(Theme.secondary)
+                            }
+                            Spacer()
+                            MiniToggle(isOn: data.alwaysListening, action: act.toggleAlways)
+                        }
+                        .padding(.horizontal, 12).frame(height: 52)
                     }
                     section("How to use") {
                         ForEach(Array(Hotkeys.all.enumerated()), id: \.offset) { i, spec in
@@ -259,7 +305,10 @@ struct SettingsHost: View {
                                           grantMicrophone: { model.requestMicrophone() },
                                           openFolder: { model.openMemoryFolder() },
                                           reindex: { model.reindex() },
-                                          toggleSpeak: { model.speakAnswers.toggle() }))
+                                          toggleSpeak: { model.speakAnswers.toggle() },
+                                          enrollVoice: { model.voice.enroll() },
+                                          toggleLock: { model.voice.lockEnabled.toggle() },
+                                          toggleAlways: { model.voice.alwaysListening.toggle() }))
     }
 }
 
@@ -268,7 +317,10 @@ extension AppModel {
         SettingsData(hearing: hearing, thinking: thinking, speaking: speaking, tokPerSec: tokPerSec, notes: notes, indexing: indexing,
                      axTrusted: axTrusted, micGranted: micGranted,
                      memoryPath: (memoryFolder.path as NSString).abbreviatingWithTildeInPath,
-                     speakAnswers: speakAnswers, failedHotkeys: hotkeyFailures)
+                     speakAnswers: speakAnswers, failedHotkeys: hotkeyFailures,
+                     voiceReady: voice.state == .ready, voiceEnrolled: voice.enrolled, voiceEnrolling: voice.enrolling,
+                     voiceProgress: voice.enrollProgress, voiceMessage: voice.enrollMessage,
+                     voiceLock: voice.lockEnabled, alwaysListening: voice.alwaysListening)
     }
 }
 

@@ -59,7 +59,7 @@ struct VoicePillView: View {
         .background(Capsule().fill(Color.black.opacity(0.85)))
         .overlay(Capsule().strokeBorder(Color.white.opacity(0.10), lineWidth: 1))
         .clipShape(Capsule())
-        .overlay(PrismBorder(Capsule(), lineWidth: 1.5, glow: 6, active: data.state != .idle && data.state != .done))
+        .overlay(PrismBorder(Capsule(), lineWidth: 1, glow: 4, active: data.state == .listening))
         .shadow(color: .black.opacity(data.state == .idle ? 0 : 0.3), radius: 10, y: 4)
         .animation(morph, value: data.state)
         .animation(morph, value: hasText)

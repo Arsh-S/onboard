@@ -88,9 +88,8 @@ enum FX {
                 let grow = 0.04 * (1 - k)
                 let p = Path(roundedRect: r.insetBy(dx: -r.width * grow / 2, dy: -r.height * grow / 2), cornerRadius: min(4, r.height / 2), style: .continuous)
                 // Each outline takes its colour from where it sits across the window, so the pass reads as light through a prism.
-                let hue = Theme.prism(0.08 + 0.8 * Motion.clamp((r.midX - w.minX) / max(w.width, 1), 0, 1))
-                l.fill(p, with: .color(hue.opacity(0.10 * a)))
-                l.stroke(p, with: .color(hue.opacity(a)), lineWidth: 1.5)
+                l.fill(p, with: .color(Theme.accent.opacity(0.06 * a)))
+                l.stroke(p, with: .color(Theme.accent.opacity(0.8 * a)), lineWidth: 1.2)
             }
         }
     }
@@ -200,8 +199,7 @@ struct CursorArrow: View {
             .overlay(ArrowShape().stroke(Color.white.opacity(0.96), style: StrokeStyle(lineWidth: size / 12, lineJoin: .round)))
             .frame(width: size, height: size)
             .shadow(color: .black.opacity(0.45), radius: 2, y: 1.5)
-            .shadow(color: Theme.prism[2].opacity(glow), radius: 9, x: -3, y: -2)
-            .shadow(color: Theme.prism[6].opacity(glow * 0.9), radius: 9, x: 4, y: 4)
+            .shadow(color: Theme.accent.opacity(glow * 0.7), radius: 7)
     }
 }
 
@@ -228,9 +226,9 @@ struct TakeoverLayer: View {
                     // Bright at the wave front, fading behind it; a cheap hash makes the pixels sparkle unevenly.
                     let jitter = Double((c &* 73 &+ r &* 151) % 17) / 17
                     let a = pow(1 - behind / 260, 2) * (0.35 + 0.65 * jitter)
-                    let s = 3.0 + 9.0 * (1 - behind / 260)
-                    let hue = Theme.prism(d / 900 + atan2(y - origin.y, x - origin.x) / (2 * .pi) + t * 0.2)
-                    ctx.fill(Path(roundedRect: CGRect(x: x - s / 2, y: y - s / 2, width: s, height: s), cornerRadius: 1.5), with: .color(hue.opacity(0.55 * a)))
+                    let s = 2.0 + 5.0 * (1 - behind / 260)
+                    let hue = Theme.prism(d / 1400)
+                    ctx.fill(Path(roundedRect: CGRect(x: x - s / 2, y: y - s / 2, width: s, height: s), cornerRadius: 1.5), with: .color(hue.opacity(0.26 * a)))
                 }
             }
         }
@@ -248,9 +246,8 @@ struct EdgeGlow: View {
         let g = AngularGradient(colors: Theme.prism, center: .center, angle: model.reduceMotion ? .zero : angle)
         let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
         ZStack {
-            shape.strokeBorder(g, lineWidth: 10).blur(radius: 14).opacity(0.55)
-            shape.strokeBorder(g, lineWidth: 3).blur(radius: 3).opacity(0.8)
-            shape.strokeBorder(g, lineWidth: 1.2)
+            shape.strokeBorder(g, lineWidth: 4).blur(radius: 8).opacity(0.28)
+            shape.strokeBorder(g, lineWidth: 1).opacity(0.55)
         }
         .opacity(on ? 1 : 0)
         .animation(.easeInOut(duration: 0.45), value: on)
@@ -294,7 +291,7 @@ struct CursorLayer: View {
         let tail = max(0, e - 0.3 * sin(Double.pi * e))
         let a = f.point(tail), b = f.point(e), w = max(model.screen.width, 1), h = max(model.screen.height, 1)
         return f.path.trimmedPath(from: tail, to: e)
-            .stroke(LinearGradient(colors: [Theme.prism[0].opacity(0), Theme.prism[1].opacity(0.45), Theme.prism[2].opacity(0.7), Theme.prism[6].opacity(0.85)], startPoint: UnitPoint(x: a.x / w, y: a.y / h), endPoint: UnitPoint(x: b.x / w, y: b.y / h)),
+            .stroke(LinearGradient(colors: [Theme.accent.opacity(0), Theme.accent.opacity(0.5)], startPoint: UnitPoint(x: a.x / w, y: a.y / h), endPoint: UnitPoint(x: b.x / w, y: b.y / h)),
                     style: StrokeStyle(lineWidth: 3, lineCap: .round))
             .blur(radius: 0.6)
     }

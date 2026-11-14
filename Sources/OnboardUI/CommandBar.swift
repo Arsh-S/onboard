@@ -129,7 +129,7 @@ struct CommandBarView: View {
         .background(BarSurface(preview: preview))
         .clipShape(shape)
         .overlay(shape.strokeBorder(Theme.hairline, lineWidth: 1))
-        .overlay(PrismBorder(shape, lineWidth: 1.5, glow: 7, active: data.running || data.listening))
+        .overlay(PrismBorder(shape, lineWidth: 1, glow: 4, active: data.listening))
         .background(shape.fill(Color.black.opacity(preview ? 1 : 0.4)).shadow(color: .black.opacity(0.45), radius: 30, y: 12))
         .animation(anim, value: data.steps.count)
         .animation(anim, value: data.answer.isEmpty)
