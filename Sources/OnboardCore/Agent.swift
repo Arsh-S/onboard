@@ -77,7 +77,9 @@ public final class Agent {
         Rules:
         - Only use element numbers that appear on the screen.
         - Never invent facts. Use search_memory or what the screen says.
-        - Each result line under "Steps so far" really happened. Do not repeat a step that succeeded.
+        - Each result line under "Steps so far" is the truth about what happened. Results starting with "Verified" worked. Results starting with "FAILED" did not: try another way or tell \(owner) honestly that it did not work.
+        - Never say something was done unless a result shows it. A typed terminal command has not run until you press return and read the result.
+        - Do not repeat a step that succeeded.
         - If the request is a question ("what", "how", "why", "what do I do"), never change anything on screen: find the facts, then answer with them.
         - In a terminal, type the real shell command, never a description of it. If you are not sure of the exact command, search_memory for it first.
         - Only type, click or add things when \(owner) asked for that.
@@ -91,6 +93,8 @@ public final class Agent {
         what does the manual say about filter changes? -> {"plan":"Check the manual","action":"search_memory","target":0,"text":"filter change procedure"}
         (after the search returned the procedure) -> {"plan":"Tell the steps","action":"answer","target":0,"text":"Swap the filter every 30 days: power down the fan, pull the tray, and seat the new one."}
         flush the DNS cache (a terminal is in front) -> {"plan":"Type the flush command","action":"type","target":0,"text":"sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder"}
+        (after the command was typed) -> {"plan":"Run it","action":"key","target":0,"text":"return"}
+        (after the terminal showed Password:) -> {"plan":"Report back","action":"answer","target":0,"text":"I ran the flush command. The terminal is asking for your password to finish."}
         remind me to call Sam tomorrow at 9 -> {"plan":"Add the reminder","action":"add_reminder","target":0,"text":"Call Sam | tomorrow 9am"}
         Answer only with the JSON object.
         """
@@ -180,31 +184,36 @@ public final class Agent {
             await stage?.glide(to: p, frame: el.frame, thought: say.isEmpty ? "Clicking \(el.label)" : say)
             await stage?.click(at: p)
             let ok = Screen.press(snap, id: tid)
-            await settle(snap)
-            return (ok ? "Clicked \(el.label)" : "Could not click \(el.label)", false)
+            let changed = await settle(snap)
+            return (!ok ? "FAILED: could not click \(el.label)" : changed ? "Clicked \(el.label); the screen changed" : "Clicked \(el.label), but nothing visibly changed. It may not have worked.", false)
         case "type":
             guard let app = target else { return ("No app to type into", false) }
-            if let snap, let el = snap.element(tid), el.role == "field" {
-                let p = CGPoint(x: el.frame.midX, y: el.frame.midY)
-                await stage?.glide(to: p, frame: el.frame, thought: say.isEmpty ? "Typing" : say)
-                await stage?.click(at: p)
-                _ = Screen.focus(snap, id: tid)
-                // Empty one-line fields are set directly; anything with content gets the text added at the end.
-                if el.value.isEmpty, Screen.setValue(snap, id: tid, text: text) { return ("Typed \"\(text.prefix(60))\" into \(el.label)", false) }
-                if Screen.insertAtEnd(snap, id: tid, text: text) { return ("Success: the text now ends with \"\(text.prefix(60))\". If the request is complete, answer now.", false) }
-            } else {
-                stage?.thought(say.isEmpty ? "Typing" : say)
-                // No field named: use the focused or main text area, still without stealing focus.
-                if let snap, let fid = Screen.defaultField(snap), let el = snap.element(fid) {
-                    step.frame = el.frame; step.point = CGPoint(x: el.frame.midX, y: el.frame.midY)
-                    await stage?.glide(to: step.point!, frame: el.frame, thought: say.isEmpty ? "Typing" : say)
-                    if Screen.insertAtEnd(snap, id: fid, text: text) { return ("Success: the document now ends with \"\(text.prefix(60))\". If the request is complete, answer now.", false) }
+            let isTerminal = Self.terminals.contains(app.localizedName ?? "")
+            let before = Screen.visibleText(app)
+            var point: CGPoint?
+            if let snap, let fid = (snap.element(tid)?.role == "field" ? tid : Screen.defaultField(snap)), let el = snap.element(fid) {
+                point = CGPoint(x: el.frame.midX, y: el.frame.midY)
+                step.frame = el.frame; step.point = point
+                await stage?.glide(to: point!, frame: el.frame, thought: say.isEmpty ? "Typing" : say)
+                await stage?.click(at: point!)
+                // Quiet route first (no focus change), except in terminals, which only accept real key presses.
+                if !isTerminal {
+                    _ = Screen.focus(snap, id: fid)
+                    if el.value.isEmpty { _ = Screen.setValue(snap, id: fid, text: text) } else { _ = Screen.insertAtEnd(snap, id: fid, text: text) }
+                    try? await Task.sleep(nanoseconds: 150_000_000)
+                    if Self.appeared(text, before: before, after: Screen.visibleText(app)) { return ("Verified: \"\(text.prefix(60))\" is now in the document. If the request is complete, answer now, in plain words.", false) }
                 }
-            }
-            guard await Screen.bringForward(app) else { return ("Could not bring \(app.localizedName ?? "the app") forward", false) }
+            } else { stage?.thought(say.isEmpty ? "Typing" : say) }
+            // Real key presses into the app.
+            guard await Screen.bringForward(app) else { return ("FAILED: could not bring \(app.localizedName ?? "the app") to the front, nothing was typed", false) }
+            if let point, !isTerminal { Screen.click(at: point) ; try? await Task.sleep(nanoseconds: 120_000_000) }
             Screen.type(text)
-            try? await Task.sleep(nanoseconds: 250_000_000)
-            return ("Typed \"\(text.prefix(60))\"", false)
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            guard Self.appeared(text, before: before, after: Screen.visibleText(app)) else {
+                return ("FAILED: the text did not appear in \(app.localizedName ?? "the app"). Do not claim it was typed.", false)
+            }
+            if isTerminal { return ("Verified: the command is typed at the prompt but NOT run yet. Use key return to run it.", false) }
+            return ("Verified: \"\(text.prefix(60))\" was typed. If the request is complete, answer now.", false)
         case "menu":
             guard let snap else { return ("No app is open", false) }
             guard let path = Screen.findMenu(snap, text) else {
@@ -220,8 +229,8 @@ public final class Agent {
             await stage?.glide(to: barPoint, frame: nil, thought: say.isEmpty ? path : say)
             await stage?.click(at: barPoint)
             let ok = Screen.pressMenu(snap, path: path)
-            await settle(snap)
-            return (ok ? "Chose \(path)" : "Could not choose \(path)", false)
+            let changed = await settle(snap)
+            return (!ok ? "FAILED: could not choose \(path)" : changed ? "Chose \(path); the screen changed" : "Chose \(path), but nothing visibly changed yet", false)
         case "key":
             let name = Self.keys.keys.sorted { $0.count > $1.count }.first { text.lowercased().contains($0) } ?? ""
             guard let app = target, let k = Self.keys[name] else { return ("Unknown key. Use one of: return, tab, escape, save, select all, copy, paste, undo, new", false) }
@@ -233,9 +242,18 @@ public final class Agent {
                 guard ok else { answer = "Okay, I left the command in the terminal without running it."; await stage?.speak(answer); return ("Not approved", true) }
             }
             guard await Screen.bringForward(app) else { return ("Could not bring the app forward", false) }
+            let beforeText = Screen.visibleText(app)
             Screen.key(k.0, command: k.1)
-            await settle(snap)
-            return ("Pressed \(text)", false)
+            _ = await settle(snap)
+            if Self.terminals.contains(app.localizedName ?? "") && (name == "return" || name == "enter") {
+                // Read what the terminal printed, so the answer reports the real outcome (errors, a password prompt, output).
+                try? await Task.sleep(nanoseconds: 700_000_000)
+                let after = Screen.visibleText(app)
+                let new = after.count > beforeText.count ? String(after.suffix(after.count - beforeText.count + 80)) : String(after.suffix(300))
+                let tail = new.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }.suffix(8).joined(separator: " / ")
+                return ("Ran it. The terminal now shows: \(tail.suffix(500)). Report exactly this outcome: if it shows Password:, say it is waiting for \(owner)'s password; if it shows an error, say so.", false)
+            }
+            return ("Pressed \(name)", false)
         case "open_app":
             stage?.thought(say.isEmpty ? "Opening \(text)" : say)
             guard let a = await Screen.open(text) else { return ("There is no app named \(text)", false) }
@@ -283,16 +301,26 @@ public final class Agent {
     }
 
     /// Wait until the screen reacts to an action and stops changing (at most about a second), instead of a fixed pause.
-    func settle(_ before: ScreenSnapshot?) async {
-        guard let t = target, let before else { try? await Task.sleep(nanoseconds: 300_000_000); return }
+    /// Did `text` show up? (New text is longer or contains the typed words; terminals wrap lines, so compare without whitespace.)
+    static func appeared(_ text: String, before: String, after: String) -> Bool {
+        func squash(_ s: String) -> String { s.filter { !$0.isWhitespace } }
+        let needle = squash(String(text.prefix(40)))
+        guard !needle.isEmpty else { return true }
+        let a = squash(after), b = squash(before)
+        return a.components(separatedBy: needle).count > b.components(separatedBy: needle).count
+    }
+
+    @discardableResult func settle(_ before: ScreenSnapshot?) async -> Bool {
+        guard let t = target, let before else { try? await Task.sleep(nanoseconds: 300_000_000); return true }
         var last = before.signature, changed = false
         for _ in 0..<8 {
             try? await Task.sleep(nanoseconds: 130_000_000)
             // A new app in front counts as a change.
-            if Screen.allowForeground, let f = Screen.targetApp(excluding: ownBundle), f.processIdentifier != t.processIdentifier { return }
+            if Screen.allowForeground, let f = Screen.targetApp(excluding: ownBundle), f.processIdentifier != t.processIdentifier { return true }
             guard let now = Screen.snapshot(t, limit: 1500, menusFrom: before) else { continue }
-            if now.signature != last { changed = true; last = now.signature } else if changed { return }
+            if now.signature != last { changed = true; last = now.signature } else if changed { return true }
         }
+        return changed
     }
 
     static func isQuestion(_ r: String) -> Bool {

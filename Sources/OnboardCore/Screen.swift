@@ -197,6 +197,20 @@ public enum Screen {
         return scored.sorted { $0.1 > $1.1 }.prefix(max).map(\.0)
     }
 
+    /// Everything readable in the app's front window right now (full text of fields and documents, not the trimmed
+    /// version the model sees). Used to check that an action really had its effect.
+    public static func visibleText(_ app: NSRunningApplication, limit: Int = 3000) -> String {
+        let root = AXUIElementCreateApplication(app.processIdentifier)
+        guard let win = (attr(root, kAXFocusedWindowAttribute) as! AXUIElement?) ?? (attr(root, kAXWindowsAttribute) as? [AXUIElement])?.first else { return "" }
+        var out = ""; var queue = [win]; var n = 0
+        while !queue.isEmpty && n < limit {
+            let e = queue.removeFirst(); n += 1
+            if let v = attr(e, kAXValueAttribute) as? String, !v.isEmpty { out += v + "\n" }
+            queue += (attr(e, kAXChildrenAttribute) as? [AXUIElement]) ?? []
+        }
+        return out
+    }
+
     /// Best menu item for a phrase: exact leaf match, then all-words match on the path.
     public static func findMenu(_ snap: ScreenSnapshot, _ phrase: String) -> String? {
         let p = phrase.lowercased().replacingOccurrences(of: "…", with: "").trimmingCharacters(in: .whitespaces)
