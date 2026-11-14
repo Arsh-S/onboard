@@ -55,7 +55,7 @@ public final class Agent {
 
     public func cancel() { cancelled = true }
 
-    static let actions = ["answer", "point", "click", "type", "menu", "key", "open_app", "search_memory", "add_reminder", "add_event", "draft_email", "draft_message", "list_apps", "show_menu", "scroll"]
+    static let actions = ["answer", "point", "click", "type", "menu", "key", "open_app", "search_memory", "add_reminder", "add_event", "draft_email", "list_apps", "show_menu", "scroll"]
 
     var system: String {
         """
@@ -80,7 +80,13 @@ public final class Agent {
         - list_apps: see which apps are installed. text = a word to filter by, or "" for all.
         - show_menu: see the commands inside one menu of the app in front. text = the menu name (for example File), or "" to list the menus.
         - scroll: move the page to see more. text = down or up.
-        - draft_message: text = recipient | message   (opens a text message or iMessage draft in Messages; \(owner) sends it). Use this for texting someone.
+
+        How to work:
+        - Take ONE small step at a time: one click, or typing into one field. After every step you get a fresh view of the screen. Look at it before deciding the next step.
+        - Never assume a step worked. Read the result and the new screen. If the thing you expected is not there, fix that first.
+        - To type somewhere, name the field number as target. Typing clicks that field first.
+        - When a list of suggestions or search results appears, click the right one before going on.
+        - Never send or submit for \(owner): do not press return in a message or email, and do not click Send. Leave the draft ready and say so.
 
         Rules:
         - Only use element numbers that appear on the screen.
@@ -106,7 +112,13 @@ public final class Agent {
         (after Terminal is open and in front) -> {"plan":"Type the flush command","action":"type","target":0,"text":"sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder"}
         (after the command was typed) -> {"plan":"Run it","action":"key","target":0,"text":"return"}
         (after the terminal showed Password:) -> {"plan":"Report back","action":"answer","target":0,"text":"I ran the flush command. The terminal is asking for your password to finish."}
-        open iMessage and draft a message to Mom saying I'll be late -> {"plan":"Draft the message","action":"draft_message","target":0,"text":"Mom | I'll be late"}
+        text Maya that I'm running late (worked out one step at a time, each after seeing the new screen):
+          {"plan":"Open Messages","action":"open_app","target":0,"text":"Messages"}
+          then, seeing a compose button [7]: {"plan":"Start a new message","action":"click","target":7,"text":""}
+          then, seeing the To field [3]: {"plan":"Enter the recipient","action":"type","target":3,"text":"Maya"}
+          then, seeing a suggestion row [12] "Maya Chen": {"plan":"Pick Maya from the suggestions","action":"click","target":12,"text":""}
+          then, seeing the message field [9]: {"plan":"Write the message","action":"type","target":9,"text":"I'm running late"}
+          then: {"plan":"Report back","action":"answer","target":0,"text":"Your message to Maya is drafted and ready. I did not send it."}
         remind me to call Sam tomorrow at 9 -> {"plan":"Add the reminder","action":"add_reminder","target":0,"text":"Call Sam | tomorrow 9am"}
         Answer only with the JSON object.
         """
@@ -121,7 +133,7 @@ public final class Agent {
         guard !req.isEmpty, !running else { return }
         running = true; cancelled = false; request = req; steps = []; answer = ""; lastVerdict = ""
         let t0 = now()
-        defer { running = false; turnSecs = now() - t0; stage?.rest() }
+        defer { running = false; turnSecs = now() - t0; stage?.rest(); writeRunLog() }
         target = app ?? Screen.targetApp(excluding: ownBundle)
         var first = true
         var retries = 0
@@ -189,6 +201,18 @@ public final class Agent {
                                        user: "Request: \(req)\nWhat you did and found (this really happened):\n\(history())\n\nTell \(owner) the result in one or two short spoken sentences, using only what is above. JSON: say.", schema: schema, maxTokens: 100)
         answer = await verified(req, proposed: (r?.json["say"] as? String) ?? "Done.")
         await stage?.speak(answer)
+    }
+
+    /// Every run is written to Application Support/Onboard/runs/last.txt (and a dated copy) so mistakes can be diagnosed.
+    func writeRunLog() {
+        let dir = URL(fileURLWithPath: NSHomeDirectory() + "/Library/Application Support/Onboard/runs")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        var out = "Request: \(request)\nApp: \(target?.localizedName ?? "none")\nTime: \(Date())  turn \(String(format: "%.1f", turnSecs))s  verdict: \(lastVerdict)\n\n"
+        for (i, s) in steps.enumerated() { out += "\(i + 1). \(s.action)(\(s.detail))  [\(String(format: "%.1f", s.secs))s]  plan: \(s.say)\n   -> \(s.result)\n" }
+        out += "\nAnswer: \(answer)\n\nLast screen the model saw:\n\(lastSnapshot?.text() ?? "(none)")\n"
+        try? out.write(to: dir.appendingPathComponent("last.txt"), atomically: true, encoding: .utf8)
+        let f = DateFormatter(); f.dateFormat = "MMdd_HHmmss"
+        try? out.write(to: dir.appendingPathComponent(f.string(from: Date()) + ".txt"), atomically: true, encoding: .utf8)
     }
 
     static let changing: Set<String> = ["type", "click", "menu", "key", "open_app"]
@@ -275,8 +299,9 @@ public final class Agent {
                 step.frame = el.frame; step.point = point
                 await stage?.glide(to: point!, frame: el.frame, thought: say.isEmpty ? "Typing" : say)
                 await stage?.click(at: point!)
-                // Quiet route first (no focus change), except in terminals, which only accept real key presses.
-                if !isTerminal {
+                // In the background (tests) use the quiet accessibility route. On the real screen, click and type like a person:
+                // apps only show suggestions and enable buttons for real key presses.
+                if !isTerminal && !Screen.allowForeground {
                     _ = Screen.focus(snap, id: fid)
                     if el.value.isEmpty { _ = Screen.setValue(snap, id: fid, text: text) } else { _ = Screen.insertAtEnd(snap, id: fid, text: text) }
                     try? await Task.sleep(nanoseconds: 150_000_000)
@@ -285,7 +310,7 @@ public final class Agent {
             } else { stage?.thought(say.isEmpty ? "Typing" : say) }
             // Real key presses into the app.
             guard await Screen.bringForward(app) else { return ("FAILED: could not bring \(app.localizedName ?? "the app") to the front, nothing was typed", false) }
-            if let point, !isTerminal { Screen.click(at: point) ; try? await Task.sleep(nanoseconds: 120_000_000) }
+            if let point, !isTerminal { Screen.click(at: point) ; try? await Task.sleep(nanoseconds: 220_000_000) }
             // A shell command must go to a terminal prompt, never to an address bar or a search field.
             if isTerminal, ["AXTextField", "AXComboBox", "AXSearchField"].contains(Screen.focusedRole(app)) {
                 return ("FAILED: the keyboard focus is in a text box (an address or search bar), not at a terminal prompt. Nothing was typed. Open the Terminal app with open_app instead.", false)
@@ -296,7 +321,8 @@ public final class Agent {
                 return ("FAILED: the text did not appear in \(app.localizedName ?? "the app"). Do not claim it was typed.", false)
             }
             if isTerminal { return ("Verified: the command is typed at the prompt but NOT run yet. Use key return to run it.", false) }
-            return ("Verified: \"\(text.prefix(60))\" was typed. If the request is complete, answer now.", false)
+            _ = await settle(snap)
+            return ("Verified: \"\(text.prefix(60))\" was typed. Look at the new screen: pick a suggestion if one appeared, or continue.", false)
         case "menu":
             guard let snap else { return ("No app is open", false) }
             guard let path = Screen.findMenu(snap, text) else {
@@ -323,6 +349,10 @@ public final class Agent {
                let cmd = steps.dropLast().last(where: { $0.action == "type" })?.detail {
                 let ok = await stage?.approve("Run this command?", detail: cmd) ?? true
                 guard ok else { answer = "Okay, I left the command in the terminal without running it."; await stage?.speak(answer); return ("Not approved", true) }
+            }
+            if name == "return" || name == "enter", ["Messages", "Mail", "Slack", "Discord", "WhatsApp"].contains(app.localizedName ?? "") {
+                let ok = await stage?.approve("Send this?", detail: "Pressing Return in \(app.localizedName ?? "this app") may send the message.") ?? false
+                guard ok else { return ("Not approved: \(owner) did not allow sending. Leave the draft as it is and answer.", false) }
             }
             guard await Screen.bringForward(app) else { return ("Could not bring the app forward", false) }
             let beforeText = Screen.visibleText(app)

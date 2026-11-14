@@ -31,7 +31,7 @@ private let voiceLog = Logger(subsystem: "net.arshsingh.onboard", category: "voi
 
     @ObservationIgnored private var spk: SpeakerIdentifier?
     @ObservationIgnored private let capture = AudioCapture()
-    @ObservationIgnored private let vad = EnergyVAD(threshold: 0.005)
+    @ObservationIgnored private let vad = EnergyVAD(threshold: 0.006)
     @ObservationIgnored private var listening = false
     @ObservationIgnored private var enrollSamples: [Float] = []
     @ObservationIgnored private let lock = NSLock()
@@ -99,13 +99,19 @@ private let voiceLog = Logger(subsystem: "net.arshsingh.onboard", category: "voi
     // MARK: always listening
 
     /// "Onboard, open my notes" / "Hey Onboard ..." (Whisper often writes "on board").
+    /// Returns the request after the wake word, or "" when only the wake word was said, or nil when it was not said.
     static func command(in text: String) -> String? {
-        // Whisper spells the name many ways: Onboard, on board, On-board, Unboard, Onbord, aboard, on bored.
-        let pattern = #"^\W*(?:(?:hey|hi|ok|okay|yo|so)\W+)?(?:on[\s-]?boa?r[de]{1,2}|on[\s-]?bored|un[\s-]?board|aboard|on[\s-]?bord)\b\W*"#
+        // Whisper spells the name many ways: Onboard, on board, On-board, Unboard, Onbord, aboard, on bored, Hey Onboard.
+        let pattern = #"^\W*(?:(?:hey|hi|ok|okay|yo|so|and)\W+)?(?:on[\s-]?boa?r[de]{1,2}|on[\s-]?bored|un[\s-]?board|aboard|on[\s-]?bord|on[\s-]?ward)\b\W*"#
         guard let re = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
               let m = re.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)), let r = Range(m.range, in: text) else { return nil }
-        let rest = text[r.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
-        return rest.count >= 3 ? rest : nil
+        return text[r.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Whisper's labels for noise and silence.
+    static func isNoise(_ text: String) -> Bool {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return t.isEmpty || (t.hasPrefix("[") && t.hasSuffix("]")) || (t.hasPrefix("(") && t.hasSuffix(")")) || (t.hasPrefix("*") && t.hasSuffix("*"))
     }
 
     func startListening() {
@@ -113,11 +119,28 @@ private let voiceLog = Logger(subsystem: "net.arshsingh.onboard", category: "voi
         listening = true
         capture.onChunk = { [weak self] chunk in
             guard let self else { return }
+            self.calibrate(chunk)
             for u in self.vad.feed(chunk) {
                 Task { @MainActor in await self.handle(u) }
             }
         }
         do { try capture.start(); voiceLog.notice("always listening started") } catch { listening = false; voiceLog.error("always listening could not start the mic") }
+    }
+
+    /// Continuous calibration: the speech threshold follows the room. It sits a little above the quietest recent level,
+    /// so a silent room hears soft speech and a noisy one (music, a fan) stops triggering on the background.
+    final class Levels: @unchecked Sendable { var recent: [Float] = []; let lock = NSLock() }
+    @ObservationIgnored private let levels = Levels()
+    private nonisolated func calibrate(_ chunk: [Float]) {
+        guard !chunk.isEmpty else { return }
+        var sq: Float = 0; for v in chunk { sq += v * v }
+        let rms = (sq / Float(chunk.count)).squareRoot()
+        levels.lock.lock()
+        levels.recent.append(rms); if levels.recent.count > 24 { levels.recent.removeFirst() }    // about 12 s of half-second chunks
+        let floor = levels.recent.sorted()[levels.recent.count / 5]                               // 20th percentile = the room's noise floor
+        levels.lock.unlock()
+        vad.threshold = min(0.03, max(0.004, floor * 2.2))
+        vad.minUtterance = 0.35                                                                   // "Onboard" on its own is short
     }
 
     func stopListening() {
@@ -126,19 +149,39 @@ private let voiceLog = Logger(subsystem: "net.arshsingh.onboard", category: "voi
         capture.stop()
     }
 
+    /// Set when "Onboard" was said on its own: the next thing said within a few seconds is the request.
+    @ObservationIgnored private var armedUntil = Date.distantPast
+    @ObservationIgnored var onArmed: (() -> Void)?
+
     private func handle(_ u: EnergyVAD.Utterance) async {
-        guard canListen() else { voiceLog.notice("utterance skipped: busy"); return }
-        guard u.duration >= 0.6, u.duration < 20, let t = transcriber() else { return }
-        guard let text = try? await t.transcribe(u.audio), !text.isEmpty else { return }
+        guard canListen() else { return }
+        guard u.duration >= 0.4, u.duration < 20, let t = transcriber() else { return }
+        guard let text = try? await t.transcribe(u.audio), !Self.isNoise(text) else { return }
         lastHeard = text
-        guard let cmd = Self.command(in: text) else {
+        let armed = Date() < armedUntil
+        var request: String
+        if let rest = Self.command(in: text) {
+            if rest.count < 3 {
+                // Just the name: check it is the owner, then wait for the request.
+                guard await isOwner(u.audio) else { voiceLog.notice("wake word from another voice"); onRejected?(); return }
+                armedUntil = Date().addingTimeInterval(7)
+                voiceLog.notice("wake word alone: armed")
+                onArmed?()
+                return
+            }
+            request = rest
+        } else if armed {
+            request = text
+        } else {
             voiceLog.notice("heard, no wake word: \(text, privacy: .public)")
             return                                                      // not addressed to Onboard: ignored, not kept
         }
-        let owner = await isOwner(u.audio)
-        voiceLog.notice("wake word heard, owner=\(owner): \(cmd, privacy: .public)")
+        armedUntil = .distantPast
+        let owner = armed ? true : await isOwner(u.audio)               // an armed request was already checked on the wake word
+        voiceLog.notice("request heard, owner=\(owner): \(request, privacy: .public)")
         guard owner else { onRejected?(); return }
         guard canListen() else { return }
-        onCommand?(cmd)
+        request = request.trimmingCharacters(in: CharacterSet(charactersIn: " ,.") )
+        onCommand?(request)
     }
 }

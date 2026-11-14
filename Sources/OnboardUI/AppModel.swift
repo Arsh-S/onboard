@@ -359,6 +359,10 @@ final class AppModel {
             self.run(text, app: Screen.targetApp(excluding: Bundle.main.bundleIdentifier))
         }
         voice.onRejected = { [weak self] in self?.notOwner() }
+        voice.onArmed = { [weak self] in
+            guard let self else { return }
+            self.liveTranscript = "Yes?"; self.setPill(.listening); self.clearPill(after: 7)
+        }
         Task { await voice.load(downloadBase: base) }
     }
 

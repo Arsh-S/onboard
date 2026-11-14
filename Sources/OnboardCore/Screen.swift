@@ -101,7 +101,21 @@ public enum Screen {
         let wf = frame(win)
         var els: [UIElement] = []; var refs: [Int: AXUIElement] = [:]
         var seenText = Set<String>()
-        var queue: [AXUIElement] = [win]; var n = 0, id = 1
+        // The front window first, then the app's other windows: suggestion lists, popovers and sheets are often separate windows.
+        let others = ((attr(root, kAXWindowsAttribute) as? [AXUIElement]) ?? []).filter { !CFEqual($0, win) }
+        var queue: [AXUIElement] = [win] + others; var n = 0, id = 1
+        /// Text inside a row or cell (the name in a suggestion or a conversation), so it can be named and clicked.
+        func innerText(_ e: AXUIElement, _ depth: Int = 0) -> String {
+            guard depth < 4 else { return "" }
+            var parts: [String] = []
+            for c in (attr(e, kAXChildrenAttribute) as? [AXUIElement]) ?? [] {
+                let r = attr(c, kAXRoleAttribute) as? String ?? ""
+                if r == "AXStaticText" || r == "AXTextField" { let v = (attr(c, kAXValueAttribute) as? String) ?? str(c, kAXTitleAttribute); if !v.isEmpty { parts.append(v) } }
+                else { let t = innerText(c, depth + 1); if !t.isEmpty { parts.append(t) } }
+                if parts.count >= 3 { break }
+            }
+            return parts.joined(separator: ", ")
+        }
         while !queue.isEmpty && n < limit && els.count < 260 {
             let e = queue.removeFirst(); n += 1
             let role = attr(e, kAXRoleAttribute) as? String ?? ""
@@ -113,11 +127,13 @@ public enum Screen {
                 if kind == "text" {
                     let t = !value.isEmpty ? value : title
                     if t.count > 1, t.count < 500, !seenText.contains(t) { seenText.insert(t); els.append(UIElement(id: 0, role: "text", label: t, value: "", frame: f)) }
-                } else if f.width > 3, f.height > 3, wf.insetBy(dx: -40, dy: -40).intersects(f) {
+                } else if f.width > 3, f.height > 3, (others.isEmpty ? wf.insetBy(dx: -40, dy: -40).intersects(f) : true) {
                     var label = !title.isEmpty ? title : !desc.isEmpty ? desc : help
                     if label.isEmpty, kind == "field" { label = str(e, kAXPlaceholderValueAttribute) }
-                    if label.isEmpty, kind == "cell" || kind == "row" { label = value }
-                    if !(label.isEmpty && value.isEmpty) && !(kind == "row") {
+                    if label.isEmpty, kind == "cell" || kind == "row" { label = value.isEmpty ? String(innerText(e).prefix(90)) : value }
+                    // A row and its only cell say the same thing: keep one.
+                    let dup = (kind == "cell" || kind == "row") && els.contains { $0.id > 0 && $0.label == label && ($0.role == "row" || $0.role == "cell") && $0.frame.intersects(f) }
+                    if !(label.isEmpty && value.isEmpty) && !dup {
                         els.append(UIElement(id: id, role: kind, label: label.isEmpty ? "(unnamed \(kind))" : label, value: kind == "field" || kind == "checkbox" || kind == "menu" || kind == "slider" ? String(value.prefix(120)) : "", frame: f))
                         refs[id] = e; id += 1
                     }
