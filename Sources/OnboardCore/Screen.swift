@@ -228,6 +228,38 @@ public enum Screen {
         return scored.min { $0.1 < $1.1 }?.0
     }
 
+    /// Items of one top-level menu, for looking around ("File" -> New Window, Open…, Close…).
+    public static func menuItems(_ snap: ScreenSnapshot, top: String) -> [String] {
+        let t = top.lowercased()
+        return snap.menus.filter { ($0.components(separatedBy: " > ").first ?? "").lowercased() == t }.map { $0.components(separatedBy: " > ").dropFirst().joined(separator: " > ") }
+    }
+    public static func menuTitles(_ snap: ScreenSnapshot) -> [String] {
+        var seen = Set<String>(); var out: [String] = []
+        for m in snap.menus { let t = m.components(separatedBy: " > ").first ?? ""; if seen.insert(t).inserted { out.append(t) } }
+        return out
+    }
+
+    /// Scroll the biggest scroll area of the front window through its scroll bar (works without moving the pointer).
+    public static func scroll(_ app: NSRunningApplication, down: Bool) -> Bool {
+        let root = AXUIElementCreateApplication(app.processIdentifier)
+        guard let win = (attr(root, kAXFocusedWindowAttribute) as! AXUIElement?) ?? (attr(root, kAXWindowsAttribute) as? [AXUIElement])?.first else { return false }
+        var best: (AXUIElement, CGFloat)?; var queue = [win]; var n = 0
+        while !queue.isEmpty && n < 1500 {
+            let e = queue.removeFirst(); n += 1
+            if (attr(e, kAXRoleAttribute) as? String) == "AXScrollArea", attr(e, kAXVerticalScrollBarAttribute) != nil {
+                let f = frame(e); let area = f.width * f.height
+                if area > (best?.1 ?? 0) { best = (e, area) }
+            }
+            queue += (attr(e, kAXChildrenAttribute) as? [AXUIElement]) ?? []
+        }
+        guard let area = best?.0, let bar = attr(area, kAXVerticalScrollBarAttribute) else { return false }
+        let b = bar as! AXUIElement
+        let v = (attr(b, kAXValueAttribute) as? NSNumber)?.doubleValue ?? 0
+        let nv = min(1, max(0, v + (down ? 0.35 : -0.35)))
+        guard abs(nv - v) > 0.001 else { return false }
+        return AXUIElementSetAttributeValue(b, kAXValueAttribute as CFString, NSNumber(value: nv)) == .success
+    }
+
     /// Role of the control that currently has keyboard focus in an app ("AXTextField", "AXTextArea", ...).
     public static func focusedRole(_ app: NSRunningApplication) -> String {
         let root = AXUIElementCreateApplication(app.processIdentifier)

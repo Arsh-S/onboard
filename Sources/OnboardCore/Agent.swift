@@ -45,7 +45,9 @@ public final class Agent {
     public let memory: MemoryIndex
     public weak var stage: AgentStage?
     public var ownBundle: String? = Bundle.main.bundleIdentifier
-    public var maxSteps = 8
+    public var maxSteps = 12
+    /// How many times a failure must be answered with a different attempt before Onboard may say it could not do it.
+    public var maxRetries = 3
     private var cancelled = false
     private var target: NSRunningApplication?
 
@@ -53,7 +55,7 @@ public final class Agent {
 
     public func cancel() { cancelled = true }
 
-    static let actions = ["answer", "point", "click", "type", "menu", "key", "open_app", "search_memory", "add_reminder", "add_event", "draft_email", "draft_message"]
+    static let actions = ["answer", "point", "click", "type", "menu", "key", "open_app", "search_memory", "add_reminder", "add_event", "draft_email", "draft_message", "list_apps", "show_menu", "scroll"]
 
     var system: String {
         """
@@ -75,6 +77,9 @@ public final class Agent {
         - search_memory: look in \(owner)'s notes, manuals and files on this Mac. text = search words. Do this before answering questions about facts, procedures, people or past notes.
         - add_reminder: text = title | when        - add_event: text = title | when
         - draft_email: text = recipient | subject | body   (opens a draft; \(owner) sends it)
+        - list_apps: see which apps are installed. text = a word to filter by, or "" for all.
+        - show_menu: see the commands inside one menu of the app in front. text = the menu name (for example File), or "" to list the menus.
+        - scroll: move the page to see more. text = down or up.
         - draft_message: text = recipient | message   (opens a text message or iMessage draft in Messages; \(owner) sends it). Use this for texting someone.
 
         Rules:
@@ -83,6 +88,7 @@ public final class Agent {
         - Each result line under "Steps so far" is the truth about what happened. Results starting with "Verified" worked. Results starting with "FAILED" did not: try another way or tell \(owner) honestly that it did not work.
         - Never say something was done unless a result shows it. A typed terminal command has not run until you press return and read the result.
         - Do not repeat a step that succeeded.
+        - When a step FAILED, do not give up and do not repeat it: try a different way. Look around first if needed (list_apps, show_menu, scroll), pick another element, use a menu command, or open the right app. Only after three different attempts fail may you answer that it did not work, and say what you tried.
         - If the request is a question ("what", "how", "why", "what do I do"), never change anything on screen: find the facts, then answer with them.
         - To run a shell command, first use open_app with "Terminal" (never a browser or a menu guess), then type the command, then key return.
         - In a terminal, type the real shell command, never a description of it. If you are not sure of the exact command, search_memory for it first.
@@ -118,6 +124,8 @@ public final class Agent {
         defer { running = false; turnSecs = now() - t0; stage?.rest() }
         target = app ?? Screen.targetApp(excluding: ownBundle)
         var first = true
+        var retries = 0
+        var nudge = ""
         for _ in 0..<maxSteps {
             if cancelled { answer = "Stopped."; return }
             // Fresh look at the screen every step.
@@ -132,7 +140,7 @@ public final class Agent {
             let actionList = Self.actions.map { "\"\($0)\"" }.joined(separator: ",")
             let schema = "{\"type\":\"object\",\"properties\":{\"plan\":{\"type\":\"string\"},\"action\":{\"type\":\"string\",\"enum\":[\(actionList)]},\"target\":{\"type\":\"integer\",\"enum\":[\(ids.map(String.init).joined(separator: ","))]},\"text\":{\"type\":\"string\"}},\"required\":[\"plan\",\"action\",\"target\",\"text\"],\"additionalProperties\":false}"
             let hints = snap.map { Screen.menuHints($0, for: req) } ?? []
-            let user = "Screen right now:\n\(screen)\nMenu commands that may help: \(hints.isEmpty ? "(none match)" : hints.joined(separator: "; "))\n\nRequest from \(owner): \(req)\n\nSteps so far:\n\(history())\n\nNow: \(Date().formatted(date: .complete, time: .shortened)). Next step as JSON (plan, action, target, text)."
+            let user = "Screen right now:\n\(screen)\nMenu commands that may help: \(hints.isEmpty ? "(none match)" : hints.joined(separator: "; "))\n\nRequest from \(owner): \(req)\n\nSteps so far:\n\(history())\(nudge)\n\nNow: \(Date().formatted(date: .complete, time: .shortened)). Next step as JSON (plan, action, target, text)."
             guard let r = try? await bonsai.json(system: system, user: user, schemaJSON: schema, maxTokens: 170) else {
                 answer = "I can't reach Bonsai. Is LM Studio running?"; await stage?.speak(answer); return
             }
@@ -142,13 +150,24 @@ public final class Agent {
             let say = (r.json["plan"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             promptTokens = r.promptTokens
 
+            let lastFailed = steps.last.map { $0.result.hasPrefix("FAILED") || $0.result.contains("nothing visibly changed") } ?? false
+            let detail = tid > 0 ? "#\(tid) \(txt)" : txt
+            let repeatsFailure = action != "answer" && steps.contains { $0.action == action && $0.detail == detail && ($0.result.hasPrefix("FAILED") || $0.id == steps.last?.id) }
+            // Persistence: after a failure, answering or repeating the same step is not accepted until other ways were tried.
+            if (action == "answer" && lastFailed || repeatsFailure) && retries < maxRetries {
+                retries += 1
+                stage?.thought("That did not work, trying another way")
+                nudge = "\n\nIMPORTANT: your last attempt did not work and you may not give up yet (attempt \(retries) of \(maxRetries)). Do something DIFFERENT now: another action, another element, a menu command, or look around with list_apps, show_menu or scroll. Do not answer and do not repeat \(steps.last?.action ?? "the last step")(\(steps.last?.detail.prefix(40) ?? ""))."
+                continue
+            }
+            nudge = ""
             if action == "answer" {
                 let proposed = txt.isEmpty ? (say.isEmpty ? "Done." : say) : txt
                 answer = await verified(req, proposed: proposed)
                 await stage?.speak(answer); return
             }
-            // The same step twice means it is stuck: summarize and stop.
-            if let last = steps.last, last.action == action, last.detail == (tid > 0 ? "#\(tid) \(txt)" : txt) { break }
+            // Still repeating after all retries: stop and report honestly.
+            if let last = steps.last, last.action == action, last.detail == detail { break }
             if tid > 0, let t = target, let old = snap?.element(tid), let fresh = Screen.snapshot(t, menusFrom: snap) {
                 if fresh.signature != snap?.signature, let moved = fresh.relocate(old) { tid = moved.id; snap = fresh; lastSnapshot = fresh }
             }
@@ -245,7 +264,7 @@ public final class Agent {
             await stage?.click(at: p)
             let ok = Screen.press(snap, id: tid)
             let changed = await settle(snap)
-            return (!ok ? "FAILED: could not click \(el.label)" : changed ? "Clicked \(el.label); the screen changed" : "Clicked \(el.label), but nothing visibly changed. It may not have worked.", false)
+            return (!ok ? "FAILED: could not click \(el.label). Try a menu command for the same thing, or a different element." : changed ? "Clicked \(el.label); the screen changed" : "Clicked \(el.label), but nothing visibly changed. It may not have worked.", false)
         case "type":
             guard let app = target else { return ("No app to type into", false) }
             let isTerminal = Self.terminals.contains(app.localizedName ?? "")
@@ -361,6 +380,27 @@ public final class Agent {
             stage?.thought(say.isEmpty ? "Adding to the calendar" : say)
             let r = await Tools.addEvent(p.first ?? text, when: p.count > 1 ? p[1] : "")
             await summarizeAfter(r); return (r, true)
+        case "list_apps":
+            stage?.thought(say.isEmpty ? "Looking at installed apps" : say)
+            let all = Screen.installedApps().keys.sorted()
+            let f = text.lowercased()
+            let hits = f.isEmpty ? all : all.filter { $0.lowercased().contains(f) }
+            return (hits.isEmpty ? "No installed app matches \"\(text)\". Some apps: \(all.prefix(40).joined(separator: ", "))" : "Installed: \(hits.prefix(40).joined(separator: ", "))", false)
+        case "show_menu":
+            guard let snap else { return ("FAILED: no app is open", false) }
+            stage?.thought(say.isEmpty ? "Looking through the menus" : say)
+            if text.isEmpty { return ("Menus: \(Screen.menuTitles(snap).joined(separator: ", "))", false) }
+            let items = Screen.menuItems(snap, top: text)
+            if let tf = snap.menuTitleFrames.first(where: { $0.key.lowercased() == text.lowercased() })?.value {
+                await stage?.glide(to: CGPoint(x: tf.midX, y: tf.midY), frame: tf, thought: say.isEmpty ? "Looking in \(text)" : say)
+            }
+            return (items.isEmpty ? "There is no \(text) menu. Menus: \(Screen.menuTitles(snap).joined(separator: ", "))" : "\(text) menu has: \(items.prefix(45).joined(separator: "; "))", false)
+        case "scroll":
+            guard let app = target else { return ("FAILED: no app is open", false) }
+            stage?.thought(say.isEmpty ? "Scrolling" : say)
+            let ok = Screen.scroll(app, down: !text.lowercased().contains("up"))
+            _ = await settle(snap)
+            return (ok ? "Scrolled \(text.lowercased().contains("up") ? "up" : "down"); the screen shows new content" : "FAILED: nothing here can scroll further", false)
         case "draft_message":
             let p = text.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
             let to = p.count > 1 ? p[0] : "", body = p.count > 1 ? p.dropFirst().joined(separator: " | ") : text
