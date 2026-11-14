@@ -19,6 +19,7 @@ public final class ScreenSnapshot: @unchecked Sendable {
     public let windowFrame: CGRect
     public let elements: [UIElement]
     public let menus: [String]                 // "Insert > Chart > 2D Column"
+    public var menuTitleFrames: [String: CGRect] = [:]   // top-level menu titles in the menu bar
     let refs: [Int: AXUIElement]
     let menuRefs: [String: AXUIElement]
     public let secs: Double
@@ -110,7 +111,7 @@ public enum Screen {
             queue += (attr(e, kAXChildrenAttribute) as? [AXUIElement]) ?? []
         }
         // Menu bar: every enabled item as a path. Menus are the most reliable way to drive a Mac app.
-        var menus: [String] = []; var menuRefs: [String: AXUIElement] = [:]
+        var menus: [String] = []; var menuRefs: [String: AXUIElement] = [:]; var titleFrames: [String: CGRect] = [:]
         if let bar = attr(root, kAXMenuBarAttribute) {
             func walk(_ e: AXUIElement, _ path: [String], _ depth: Int) {
                 guard depth < 5, menus.count < 700 else { return }
@@ -120,6 +121,7 @@ public enum Screen {
                     if role == "AXMenu" { walk(c, path, depth); continue }
                     guard !title.isEmpty, title != "Apple" else { continue }
                     let p = path + [title]
+                    if depth == 0 { titleFrames[title] = frame(c) }
                     let kids = (attr(c, kAXChildrenAttribute) as? [AXUIElement]) ?? []
                     if kids.isEmpty {
                         if (attr(c, kAXEnabledAttribute) as? Bool) != false, p.count > 1 { let key = p.joined(separator: " > "); menus.append(key); menuRefs[key] = c }
@@ -128,8 +130,10 @@ public enum Screen {
             }
             walk(bar as! AXUIElement, [], 0)
         }
-        return ScreenSnapshot(app: app.localizedName ?? "", pid: app.processIdentifier, window: str(win, kAXTitleAttribute), windowFrame: wf,
-                              elements: els, menus: menus, refs: refs, menuRefs: menuRefs, secs: CFAbsoluteTimeGetCurrent() - t0)
+        let snap = ScreenSnapshot(app: app.localizedName ?? "", pid: app.processIdentifier, window: str(win, kAXTitleAttribute), windowFrame: wf,
+                                  elements: els, menus: menus, refs: refs, menuRefs: menuRefs, secs: CFAbsoluteTimeGetCurrent() - t0)
+        snap.menuTitleFrames = titleFrames
+        return snap
     }
 
     // MARK: actions

@@ -21,6 +21,8 @@ struct OverlayRoot: View {
     func layers(_ now: Date) -> some View {
         ZStack(alignment: .topLeading) {
             DimLayer(model: model)
+            TakeoverLayer(model: model, now: now)
+            EdgeGlow(model: model, now: now)
             EffectsLayer(model: model, now: now)
             StepsLayer(model: model)
             CursorLayer(model: model, now: now)
@@ -85,8 +87,10 @@ enum FX {
                 let k = reduce ? 1 : Motion.spring(local, response: 0.3, damping: 0.85)
                 let grow = 0.04 * (1 - k)
                 let p = Path(roundedRect: r.insetBy(dx: -r.width * grow / 2, dy: -r.height * grow / 2), cornerRadius: min(4, r.height / 2), style: .continuous)
-                l.fill(p, with: .color(Theme.accent.opacity(0.08 * a)))
-                l.stroke(p, with: .color(Theme.accent.opacity(a)), lineWidth: 1.5)
+                // Each outline takes its colour from where it sits across the window, so the pass reads as light through a prism.
+                let hue = Theme.prism(0.08 + 0.8 * Motion.clamp((r.midX - w.minX) / max(w.width, 1), 0, 1))
+                l.fill(p, with: .color(hue.opacity(0.10 * a)))
+                l.stroke(p, with: .color(hue.opacity(a)), lineWidth: 1.5)
             }
         }
     }
@@ -128,11 +132,6 @@ struct StepsLayer: View {
     var body: some View {
         let last = model.steps.last?.id
         ZStack(alignment: .topLeading) {
-            ForEach(model.steps) { s in
-                if let prev = s.prev, hypot(prev.x - s.at.x, prev.y - s.at.y) > 26 {
-                    Connector(from: Self.center(prev), to: Self.center(s.at)).transition(.opacity)
-                }
-            }
             ForEach(model.steps) { s in
                 let c = Self.center(s.at)
                 StepBadge(n: s.id)
@@ -193,14 +192,68 @@ struct ArrowShape: Shape {
 
 struct CursorArrow: View {
     var glow = 0.6
-    var size = 18.0
+    var size = 22.0
     var body: some View {
+        // A dark pointer with a crisp white edge reads on any background; the spectrum glow marks it as the agent's.
         ArrowShape()
-            .fill(LinearGradient(colors: [Theme.accentBright, Theme.accent], startPoint: .topLeading, endPoint: .bottomTrailing))
-            .overlay(ArrowShape().stroke(Color.white.opacity(0.9), style: StrokeStyle(lineWidth: size / 18, lineJoin: .round)))
+            .fill(LinearGradient(colors: [Color(white: 0.16), Color(white: 0.04)], startPoint: .topLeading, endPoint: .bottomTrailing))
+            .overlay(ArrowShape().stroke(Color.white.opacity(0.96), style: StrokeStyle(lineWidth: size / 12, lineJoin: .round)))
             .frame(width: size, height: size)
-            .shadow(color: .black.opacity(0.35), radius: 1.5, y: 1)
-            .shadow(color: Theme.accent.opacity(glow), radius: 8)
+            .shadow(color: .black.opacity(0.45), radius: 2, y: 1.5)
+            .shadow(color: Theme.prism[2].opacity(glow), radius: 9, x: -3, y: -2)
+            .shadow(color: Theme.prism[6].opacity(glow * 0.9), radius: 9, x: 4, y: 4)
+    }
+}
+
+/// The takeover: a pixel grid lights up in a spectrum wave that rolls out from the cursor across the whole screen.
+struct TakeoverLayer: View {
+    let model: OverlayModel
+    let now: Date
+    static let life = 1.15, cell = 30.0
+    var body: some View {
+        let start = model.takeover, origin = model.tip, size = model.screen, reduce = model.reduceMotion
+        Canvas { ctx, _ in
+            guard let start, !reduce else { return }
+            let t = now.timeIntervalSince(start)
+            guard t >= 0, t < Self.life else { return }
+            let reach = hypot(max(origin.x, size.width - origin.x), max(origin.y, size.height - origin.y))
+            let front = Motion.easeOut(t / Self.life) * (reach + 260)
+            let cols = Int(size.width / Self.cell) + 1, rows = Int(size.height / Self.cell) + 1
+            for r in 0..<rows {
+                for c in 0..<cols {
+                    let x = (Double(c) + 0.5) * Self.cell, y = (Double(r) + 0.5) * Self.cell
+                    let d = hypot(x - origin.x, y - origin.y)
+                    let behind = front - d
+                    guard behind > 0, behind < 260 else { continue }
+                    // Bright at the wave front, fading behind it; a cheap hash makes the pixels sparkle unevenly.
+                    let jitter = Double((c &* 73 &+ r &* 151) % 17) / 17
+                    let a = pow(1 - behind / 260, 2) * (0.35 + 0.65 * jitter)
+                    let s = 3.0 + 9.0 * (1 - behind / 260)
+                    let hue = Theme.prism(d / 900 + atan2(y - origin.y, x - origin.x) / (2 * .pi) + t * 0.2)
+                    ctx.fill(Path(roundedRect: CGRect(x: x - s / 2, y: y - s / 2, width: s, height: s), cornerRadius: 1.5), with: .color(hue.opacity(0.55 * a)))
+                }
+            }
+        }
+        .onChange(of: now) { if let s = model.takeover, now.timeIntervalSince(s) > Self.life { model.takeover = nil } }
+    }
+}
+
+/// A spectrum glow around the screen edge while Onboard is working.
+struct EdgeGlow: View {
+    let model: OverlayModel
+    let now: Date
+    var body: some View {
+        let on = model.cursorVisible && model.mode != .idle
+        let angle = Angle.degrees(now.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 8) * 45)
+        let g = AngularGradient(colors: Theme.prism, center: .center, angle: model.reduceMotion ? .zero : angle)
+        let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+        ZStack {
+            shape.strokeBorder(g, lineWidth: 10).blur(radius: 14).opacity(0.55)
+            shape.strokeBorder(g, lineWidth: 3).blur(radius: 3).opacity(0.8)
+            shape.strokeBorder(g, lineWidth: 1.2)
+        }
+        .opacity(on ? 1 : 0)
+        .animation(.easeInOut(duration: 0.45), value: on)
     }
 }
 
@@ -241,7 +294,7 @@ struct CursorLayer: View {
         let tail = max(0, e - 0.3 * sin(Double.pi * e))
         let a = f.point(tail), b = f.point(e), w = max(model.screen.width, 1), h = max(model.screen.height, 1)
         return f.path.trimmedPath(from: tail, to: e)
-            .stroke(LinearGradient(colors: [Theme.accent.opacity(0), Theme.accent.opacity(0.55)], startPoint: UnitPoint(x: a.x / w, y: a.y / h), endPoint: UnitPoint(x: b.x / w, y: b.y / h)),
+            .stroke(LinearGradient(colors: [Theme.prism[0].opacity(0), Theme.prism[1].opacity(0.45), Theme.prism[2].opacity(0.7), Theme.prism[6].opacity(0.85)], startPoint: UnitPoint(x: a.x / w, y: a.y / h), endPoint: UnitPoint(x: b.x / w, y: b.y / h)),
                     style: StrokeStyle(lineWidth: 3, lineCap: .round))
             .blur(radius: 0.6)
     }

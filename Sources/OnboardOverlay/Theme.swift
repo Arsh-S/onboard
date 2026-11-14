@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// Shared design tokens (see docs/design-spec.md). Add members freely; do not rename existing ones.
 public enum Theme {
@@ -11,6 +12,19 @@ public enum Theme {
     public static let tertiary = Color.white.opacity(0.40)
     public static let hairline = Color.white.opacity(0.08)
     public static let strongLine = Color.white.opacity(0.14)
+    /// Prism spectrum (light split by glass): used for the takeover wave, the edge glow, trails and active borders.
+    public static let prism: [Color] = [
+        Color(red: 0.55, green: 0.36, blue: 1.00), Color(red: 0.27, green: 0.55, blue: 1.00), Color(red: 0.18, green: 0.83, blue: 0.86),
+        Color(red: 0.30, green: 0.92, blue: 0.55), Color(red: 1.00, green: 0.85, blue: 0.32), Color(red: 1.00, green: 0.52, blue: 0.36),
+        Color(red: 1.00, green: 0.38, blue: 0.72), Color(red: 0.55, green: 0.36, blue: 1.00),
+    ]
+    /// A point on the spectrum, 0...1 wrapping.
+    public static func prism(_ t: Double) -> Color {
+        let x = (t - t.rounded(.down)) * Double(prism.count - 1), i = Int(x), f = x - Double(i)
+        let a = NSColor(prism[i]).usingColorSpace(.sRGB)!, b = NSColor(prism[min(i + 1, prism.count - 1)]).usingColorSpace(.sRGB)!
+        return Color(red: a.redComponent + (b.redComponent - a.redComponent) * f, green: a.greenComponent + (b.greenComponent - a.greenComponent) * f,
+                     blue: a.blueComponent + (b.blueComponent - a.blueComponent) * f)
+    }
     public static let spring = Animation.spring(response: 0.35, dampingFraction: 0.85)
     public static let snappy = Animation.spring(response: 0.25, dampingFraction: 1.0)
     public static let pop = Animation.spring(response: 0.4, dampingFraction: 0.6)
@@ -21,4 +35,27 @@ public extension Theme {
     static let accentBright = Color(red: 0.369, green: 0.918, blue: 0.831)          // #5EEAD4, top of the cursor gradient
     static let ink = Color(red: 0.016, green: 0.137, blue: 0.118)                   // dark text on teal
     static let surface = Color(red: 0.082, green: 0.094, blue: 0.090)               // card fill (solid, no material)
+}
+
+
+/// A slowly rotating spectrum border with a soft glow. Put it over any shape while Onboard is listening or working.
+public struct PrismBorder<S: InsettableShape>: View {
+    let shape: S
+    var lineWidth: CGFloat
+    var glow: CGFloat
+    var active: Bool
+    public init(_ shape: S, lineWidth: CGFloat = 1.5, glow: CGFloat = 6, active: Bool = true) { self.shape = shape; self.lineWidth = lineWidth; self.glow = glow; self.active = active }
+    public var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !active)) { tl in
+            let angle = Angle.degrees(tl.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 6) * 60)
+            let g = AngularGradient(colors: Theme.prism, center: .center, angle: angle)
+            ZStack {
+                shape.strokeBorder(g, lineWidth: lineWidth * 2).blur(radius: glow).opacity(0.7)
+                shape.strokeBorder(g, lineWidth: lineWidth)
+            }
+        }
+        .opacity(active ? 1 : 0)
+        .animation(.easeOut(duration: 0.25), value: active)
+        .allowsHitTesting(false)
+    }
 }

@@ -84,12 +84,13 @@ struct ScanPass: Sendable {
     var ripples: [Ripple] = []
     var target: TargetGlow?
     var scan: ScanPass?
+    var takeover: Date?
     var dim = false
     var dimCenter = CGPoint.zero
     var reduceMotion = false
 
     /// The frame clock only runs while something is on screen.
-    var animating: Bool { cursorVisible || scan != nil || !ripples.isEmpty }
+    var animating: Bool { cursorVisible || scan != nil || !ripples.isEmpty || takeover != nil }
 
     func set(_ m: CursorMode, at now: Date = Date()) { if m != mode { mode = m; modeSince = now } }
 

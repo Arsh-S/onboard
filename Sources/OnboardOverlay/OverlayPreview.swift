@@ -72,6 +72,12 @@ public enum OverlayPreview {
         }
         shot("overlay_xray.png", to: dir, xray.0, xray.1)
 
+        let take = model { m, now in
+            m.tip = CGPoint(x: 640, y: 470); m.set(.thinking, at: now.addingTimeInterval(-1)); m.bubble = "Taking a look"
+            m.takeover = now.addingTimeInterval(-0.42)
+        }
+        shot("overlay_takeover.png", to: dir, take.0, take.1)
+
         let target = model { m, now in
             m.tip = mid(3); m.set(.acting, at: now.addingTimeInterval(-1)); m.bubble = "Share"
             m.target = TargetGlow(rect: els[3].rect, start: now.addingTimeInterval(-0.11))

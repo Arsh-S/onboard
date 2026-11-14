@@ -40,7 +40,7 @@ import OnboardCore
         let dest = CGPoint(x: Motion.clamp(to.x, 1, model.screen.width - 2), y: Motion.clamp(to.y, 1, model.screen.height - 2))
         setBubble(thought)
         model.set(.acting)
-        model.target?.end = model.target?.end ?? Date()
+        if var old = model.target, old.end == nil { old.end = Date(); model.target = old }   // read, then write: one access at a time
         let from = model.pose(at: Date()).tip
         func glow() { if let frame { model.target = TargetGlow(rect: frame, start: Date()) } }
         if hypot(dest.x - from.x, dest.y - from.y) < 2 {
@@ -81,7 +81,7 @@ import OnboardCore
             await self?.pause(0.4)
             guard let self else { return }
             self.model.ripples.removeAll { Date().timeIntervalSince($0.start) > Ripple.life }
-            if self.model.target?.end == nil { self.model.target?.end = Date() }
+            if var old = self.model.target, old.end == nil { old.end = Date(); self.model.target = old }
             if gen == self.restGen, self.model.mode == .acting, self.model.flight == nil { self.model.set(.thinking) }
         }
     }
@@ -119,7 +119,7 @@ import OnboardCore
             await self?.pause(2)
             guard let self, gen == self.restGen else { return }
             withAnimation(.easeOut(duration: 0.4)) { self.model.steps = []; self.model.bubble = nil }
-            if self.model.target?.end == nil { self.model.target?.end = Date() }
+            if var old = self.model.target, old.end == nil { old.end = Date(); self.model.target = old }
             await self.pause(4)
             guard gen == self.restGen else { return }
             withAnimation(.easeOut(duration: 0.5)) { self.model.cursorVisible = false }
@@ -157,6 +157,7 @@ import OnboardCore
         guard let screen = NSScreen.screens.first else { return false }
         if resting {
             resting = false; restGen += 1; steps = 0
+            model.takeover = Date()          // the grid wave that says "Onboard has the screen"
             if !model.steps.isEmpty { withAnimation(.easeOut(duration: 0.2)) { model.steps = [] } }
         }
         model.reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion

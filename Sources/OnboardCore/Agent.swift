@@ -79,6 +79,7 @@ public final class Agent {
         - Never invent facts. Use search_memory or what the screen says.
         - Each result line under "Steps so far" really happened. Do not repeat a step that succeeded.
         - If the request is a question ("what", "how", "why", "what do I do"), never change anything on screen: find the facts, then answer with them.
+        - In a terminal, type the real shell command, never a description of it. If you are not sure of the exact command, search_memory for it first.
         - Only type, click or add things when \(owner) asked for that.
         - As soon as the request is done, use answer and say what you did or found.
 
@@ -89,6 +90,7 @@ public final class Agent {
         where is the share button? -> {"plan":"Point at Share","action":"point","target":12,"text":"It's right here, the Share button in the toolbar."}
         what does the manual say about filter changes? -> {"plan":"Check the manual","action":"search_memory","target":0,"text":"filter change procedure"}
         (after the search returned the procedure) -> {"plan":"Tell the steps","action":"answer","target":0,"text":"Swap the filter every 30 days: power down the fan, pull the tray, and seat the new one."}
+        flush the DNS cache (a terminal is in front) -> {"plan":"Type the flush command","action":"type","target":0,"text":"sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder"}
         remind me to call Sam tomorrow at 9 -> {"plan":"Add the reminder","action":"add_reminder","target":0,"text":"Call Sam | tomorrow 9am"}
         Answer only with the JSON object.
         """
@@ -154,6 +156,7 @@ public final class Agent {
         await stage?.speak(answer)
     }
 
+    static let terminals: Set<String> = ["Terminal", "iTerm2", "iTerm", "Ghostty", "Warp", "kitty", "Alacritty", "cmux"]
     static let keys: [String: (CGKeyCode, Bool)] = ["return": (36, false), "enter": (36, false), "tab": (48, false), "escape": (53, false), "save": (1, true),
                                                     "select all": (0, true), "copy": (8, true), "paste": (9, true), "undo": (6, true), "new": (45, true)]
 
@@ -204,7 +207,11 @@ public final class Agent {
                 return ("No menu command named \"\(text)\". Similar: \(near.joined(separator: "; "))", false)
             }
             step.detail = path
-            let barPoint = CGPoint(x: snap.windowFrame.minX + 160, y: 12)
+            // Fly to the real menu title in the menu bar.
+            let top = path.components(separatedBy: " > ").first ?? ""
+            let tf = snap.menuTitleFrames[top]
+            let barPoint = tf.map { CGPoint(x: $0.midX, y: $0.midY) } ?? CGPoint(x: snap.windowFrame.minX + 160, y: 12)
+            step.frame = tf; step.point = barPoint
             await stage?.glide(to: barPoint, frame: nil, thought: say.isEmpty ? path : say)
             await stage?.click(at: barPoint)
             let ok = Screen.pressMenu(snap, path: path)
@@ -214,6 +221,12 @@ public final class Agent {
             let name = Self.keys.keys.sorted { $0.count > $1.count }.first { text.lowercased().contains($0) } ?? ""
             guard let app = target, let k = Self.keys[name] else { return ("Unknown key. Use one of: return, tab, escape, save, select all, copy, paste, undo, new", false) }
             stage?.thought(say.isEmpty ? "Pressing \(text)" : say)
+            // Running a shell command is the kind of thing Onboard asks about first.
+            if name == "return" || name == "enter", Self.terminals.contains(app.localizedName ?? ""),
+               let cmd = steps.dropLast().last(where: { $0.action == "type" })?.detail {
+                let ok = await stage?.approve("Run this command?", detail: cmd) ?? true
+                guard ok else { answer = "Okay, I left the command in the terminal without running it."; await stage?.speak(answer); return ("Not approved", true) }
+            }
             guard await Screen.bringForward(app) else { return ("Could not bring the app forward", false) }
             Screen.key(k.0, command: k.1)
             try? await Task.sleep(nanoseconds: 350_000_000)
