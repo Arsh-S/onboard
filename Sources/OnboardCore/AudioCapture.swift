@@ -104,8 +104,13 @@ public final class Recorder: @unchecked Sendable {
         capture.onChunk = { [weak self] c in
             guard let self else { return }
             self.lock.lock(); self.samples += c; let n = self.samples.count; self.lock.unlock()
-            var sum: Float = 0; for x in c { sum += x * x }
-            self.onLevel?(sqrt(sum / Float(c.count)), Double(n) / Double(SR))
+            _ = n
+        }
+        // Level for the waveform comes from every input buffer (about 80 ms), not from the half-second chunks.
+        capture.onLevel = { [weak self] rms in
+            guard let self else { return }
+            self.lock.lock(); let n = self.samples.count; self.lock.unlock()
+            self.onLevel?(rms, Double(n) / Double(SR))
         }
         try capture.start()
     }

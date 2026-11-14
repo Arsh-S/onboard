@@ -281,7 +281,13 @@ final class AppModel {
 
     private func pushLevel(_ level: Float) {
         guard recording != nil else { return }
-        levels.insert(level, at: 0); levels.removeLast()
+        // Loudness in decibels mapped to 0...1 (quiet room about -55 dB, normal speech -35 to -15 dB), with a fast
+        // attack and a slower release so the bars jump with each syllable and settle smoothly.
+        let db = 20 * log10(max(level, 0.00001))
+        let target = min(max((db + 52) / 34, 0), 1)
+        let previous = levels.first ?? 0
+        let smoothed = target > previous ? previous + (target - previous) * 0.85 : previous + (target - previous) * 0.45
+        levels.insert(smoothed, at: 0); levels.removeLast()
     }
 
     private func abandonRecording() {

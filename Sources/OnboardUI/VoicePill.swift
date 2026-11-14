@@ -68,8 +68,9 @@ struct VoicePillView: View {
 
     private func barHeight(_ i: Int) -> CGFloat {
         let level: CGFloat = data.levels.isEmpty ? 0 : CGFloat(data.levels[min(abs(i - 4), data.levels.count - 1)])
-        let shaped: CGFloat = pow(min(level * 2.85, 1), 0.76)
-        return 4 + shaped * 16 * Self.profile[i]
+        // Levels arrive already normalized to 0...1. A little per-bar variation keeps neighbours from moving as one block.
+        let wobble: CGFloat = [0.92, 1.0, 0.86, 1.0, 1.0, 0.95, 0.88, 1.0, 0.9][i]
+        return 4 + min(level * wobble, 1) * 18 * Self.profile[i]
     }
 
     private var levelBars: some View {
@@ -82,7 +83,7 @@ struct VoicePillView: View {
             }
         }
         .frame(height: 24)
-        .animation(.linear(duration: 0.08), value: data.levels)
+        .animation(.spring(response: 0.16, dampingFraction: 0.7), value: data.levels)
     }
 }
 
