@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="640" viewBox="0 0 1200 640" font-family="-apple-system, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif">
+  <title>Onboard architecture</title>
+  <desc>Voice or text goes through WhisperKit to Bonsai 2 2B and 9B, which read the screen as text and local memory, drive the agent cursor, and speak through TTSKit. Everything stays on the Mac.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2DD4BF"/>
+    </marker>
+    <marker id="arrowDim" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#8A938F"/>
+    </marker>
+  </defs>
+  <style>
+    .box { fill: #121615; stroke: #2A302E; stroke-width: 1.5; }
+    .model { fill: #0F1F1C; stroke: #2DD4BF; stroke-width: 1.5; }
+    .title { fill: #FFFFFF; font-size: 16px; font-weight: 600; text-anchor: middle; }
+    .sub { fill: #B4BCB8; font-size: 12px; text-anchor: middle; }
+    .tag { fill: #2DD4BF; font-size: 10px; font-weight: 600; letter-spacing: 1px; text-anchor: middle; }
+    .lbl { fill: #9AA39F; font-size: 11px; }
+    .flow { stroke: #2DD4BF; stroke-width: 1.6; fill: none; }
+    .dim { stroke: #8A938F; stroke-width: 1.4; fill: none; stroke-dasharray: 5 4; }
+  </style>
+
+  <rect width="1200" height="640" fill="#0B0D0C"/>
+
+  <!-- device boundary -->
+  <rect x="20" y="20" width="1160" height="600" rx="22" fill="none" stroke="#2DD4BF" stroke-width="1.5" stroke-dasharray="8 6" opacity="0.8"/>
+  <rect x="425" y="8" width="350" height="26" rx="13" fill="#0B0D0C"/>
+  <text x="600" y="26" fill="#2DD4BF" font-size="14" font-weight="600" text-anchor="middle">Your Mac. WiFi off. 0 bytes to any cloud.</text>
+
+  <text x="50" y="76" fill="#FFFFFF" font-size="24" font-weight="700">Onboard</text>
+  <text x="50" y="98" fill="#B4BCB8" font-size="13">Muse, recreated offline.</text>
+
+  <!-- You -->
+  <rect class="box" x="45" y="270" width="130" height="90" rx="12"/>
+  <text class="title" x="110" y="311">You</text>
+  <text class="sub" x="110" y="332">voice or text</text>
+
+  <!-- WhisperKit -->
+  <rect class="box" x="215" y="270" width="150" height="90" rx="12"/>
+  <text class="title" x="290" y="303">WhisperKit</text>
+  <text class="sub" x="290" y="322">speech to text</text>
+  <text class="tag" x="290" y="346">ARGMAX</text>
+
+  <!-- Bonsai 2 9B -->
+  <rect class="model" x="430" y="200" width="230" height="110" rx="12"/>
+  <text class="title" x="545" y="229">Bonsai 2 9B</text>
+  <text class="sub" x="545" y="249">planner</text>
+  <text class="sub" x="545" y="266">one JSON action per step</text>
+  <text class="tag" x="545" y="295">PRISMML + LM STUDIO</text>
+
+  <!-- Bonsai 2 2B -->
+  <rect class="model" x="430" y="440" width="230" height="100" rx="12"/>
+  <text class="title" x="545" y="469">Bonsai 2 2B</text>
+  <text class="sub" x="545" y="489">router, quick answers</text>
+  <text class="tag" x="545" y="523">PRISMML + LM STUDIO</text>
+
+  <!-- Screen as text -->
+  <rect class="box" x="820" y="70" width="200" height="80" rx="12"/>
+  <text class="title" x="920" y="105">Screen as text</text>
+  <text class="sub" x="920" y="126">accessibility tree</text>
+
+  <!-- Local memory -->
+  <rect class="box" x="820" y="180" width="200" height="90" rx="12"/>
+  <text class="title" x="920" y="205">Local memory</text>
+  <text class="sub" x="920" y="223">notes and manuals</text>
+  <text class="sub" x="920" y="239">Nomic embeddings</text>
+  <text class="tag" x="920" y="259">LM STUDIO</text>
+
+  <!-- Agent cursor -->
+  <rect class="box" x="820" y="310" width="200" height="80" rx="12"/>
+  <text class="title" x="920" y="345">Agent cursor</text>
+  <text class="sub" x="920" y="366">click, type, menus</text>
+
+  <!-- TTSKit -->
+  <rect class="box" x="820" y="450" width="200" height="80" rx="12"/>
+  <text class="title" x="920" y="479">TTSKit</text>
+  <text class="sub" x="920" y="498">text to speech</text>
+  <text class="tag" x="920" y="519">ARGMAX</text>
+
+  <!-- The app -->
+  <rect class="box" x="1060" y="310" width="105" height="80" rx="12"/>
+  <text class="title" x="1112" y="345">The app</text>
+  <text class="sub" x="1112" y="366">any Mac app</text>
+
+  <!-- Speaker -->
+  <rect class="box" x="1060" y="450" width="105" height="80" rx="12"/>
+  <text class="title" x="1112" y="485">Speaks</text>
+  <text class="sub" x="1112" y="506">answers aloud</text>
+
+  <!-- arrows -->
+  <line class="flow" x1="175" y1="315" x2="213" y2="315" marker-end="url(#arrow)"/>
+  <text class="lbl" x="194" y="305" text-anchor="middle">voice</text>
+
+  <path class="flow" d="M110,360 C110,500 300,505 428,505" marker-end="url(#arrow)"/>
+  <text class="lbl" x="215" y="520" text-anchor="middle">typed text</text>
+
+  <line class="flow" x1="365" y1="335" x2="428" y2="465" marker-end="url(#arrow)"/>
+  <text class="lbl" x="408" y="395">request</text>
+
+  <line class="flow" x1="545" y1="440" x2="545" y2="312" marker-end="url(#arrow)"/>
+  <text class="lbl" x="555" y="380">tasks</text>
+
+  <line class="flow" x1="662" y1="225" x2="818" y2="115" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <text class="lbl" x="728" y="168" text-anchor="end">reads</text>
+
+  <line class="flow" x1="662" y1="250" x2="818" y2="228" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <text class="lbl" x="740" y="230" text-anchor="middle">searches</text>
+
+  <line class="flow" x1="660" y1="280" x2="818" y2="345" marker-end="url(#arrow)"/>
+  <text class="lbl" x="810" y="364" text-anchor="end">JSON action</text>
+
+  <line class="flow" x1="650" y1="312" x2="818" y2="470" marker-end="url(#arrow)"/>
+  <text class="lbl" x="718" y="402" text-anchor="end">spoken reply</text>
+
+  <line class="flow" x1="660" y1="490" x2="818" y2="490" marker-end="url(#arrow)"/>
+  <text class="lbl" x="739" y="482" text-anchor="middle">quick answer</text>
+
+  <line class="flow" x1="1020" y1="350" x2="1058" y2="350" marker-end="url(#arrow)"/>
+  <line class="flow" x1="1020" y1="490" x2="1058" y2="490" marker-end="url(#arrow)"/>
+
+  <path class="dim" d="M1112,310 L1112,110 L1023,110" marker-end="url(#arrowDim)"/>
+  <text class="lbl" x="1085" y="100" text-anchor="middle">fresh every step</text>
+
+  <text x="50" y="588" fill="#9AA39F" font-size="12">LM Studio serves Bonsai and the embedding model on localhost. Planned: Argmax SpeakerKit voice lock.</text>
+</svg>
