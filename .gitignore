@@ -1,0 +1,6 @@
+.build/
+build/
+runtime/
+*.wav
+*.log
+.DS_Store
