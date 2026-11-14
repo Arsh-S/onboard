@@ -217,13 +217,22 @@ public enum Screen {
         func leaf(_ m: String) -> String { (m.components(separatedBy: " > ").last ?? m).lowercased().replacingOccurrences(of: "…", with: "").replacingOccurrences(of: "...", with: "") }
         if let m = snap.menus.first(where: { $0.lowercased() == p }) { return m }
         if let m = snap.menus.first(where: { leaf($0) == p }) { return m }
+        // A loose match must be on the command's own name and nearly the same length: "Terminal" must never pick
+        // "Make this the Default Terminal". Otherwise return nothing and let the model see the real choices.
         let words = p.split { !$0.isLetter && !$0.isNumber }.map(String.init).filter { $0.count > 1 }
-        guard !words.isEmpty else { return nil }
+        guard words.count >= 2 else { return nil }
         let scored = snap.menus.compactMap { m -> (String, Int)? in
-            let l = m.lowercased(); let hits = words.filter { l.contains($0) }.count
-            return hits == words.count ? (m, m.count) : nil
+            let l = leaf(m); let lw = l.split { !$0.isLetter && !$0.isNumber }.count
+            return words.allSatisfy { l.contains($0) } && lw <= words.count + 1 ? (m, l.count) : nil
         }
         return scored.min { $0.1 < $1.1 }?.0
+    }
+
+    /// Role of the control that currently has keyboard focus in an app ("AXTextField", "AXTextArea", ...).
+    public static func focusedRole(_ app: NSRunningApplication) -> String {
+        let root = AXUIElementCreateApplication(app.processIdentifier)
+        guard let f = attr(root, kAXFocusedUIElementAttribute) else { return "" }
+        return attr(f as! AXUIElement, kAXRoleAttribute) as? String ?? ""
     }
 
     @discardableResult public static func pressMenu(_ snap: ScreenSnapshot, path: String) -> Bool {

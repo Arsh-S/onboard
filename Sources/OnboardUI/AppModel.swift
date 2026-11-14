@@ -228,14 +228,16 @@ final class AppModel {
     private func say(_ text: String) async {
         answer = text
         if !gotReply { replySecs = CFAbsoluteTimeGetCurrent() - runStart; gotReply = true }
-        if speakAnswers, let s = speech {
-            abandonRecording()
-            speakingNow = true
-            setPill(.speaking)
+        guard speakAnswers, let s = speech else { finishPill(); return }
+        // Speak in the background: the turn ends as soon as the answer is on screen, so the bar can be closed right away.
+        abandonRecording()
+        speakingNow = true
+        setPill(.speaking)
+        Task { [weak self] in
             _ = try? await s.speak(text)
-            speakingNow = false
+            self?.speakingNow = false
+            self?.finishPill()
         }
-        finishPill()
     }
 
     // MARK: voice

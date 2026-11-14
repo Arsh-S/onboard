@@ -38,6 +38,8 @@ public final class Agent {
     public private(set) var lastSnapshot: ScreenSnapshot?
     public private(set) var turnSecs = 0.0
     public private(set) var promptTokens = 0
+    /// done, partly or not_done from the last check ("" when nothing needed checking).
+    public private(set) var lastVerdict = ""
     public var owner = "you"
     public let bonsai: Bonsai
     public let memory: MemoryIndex
@@ -81,6 +83,7 @@ public final class Agent {
         - Never say something was done unless a result shows it. A typed terminal command has not run until you press return and read the result.
         - Do not repeat a step that succeeded.
         - If the request is a question ("what", "how", "why", "what do I do"), never change anything on screen: find the facts, then answer with them.
+        - To run a shell command, first use open_app with "Terminal" (never a browser or a menu guess), then type the command, then key return.
         - In a terminal, type the real shell command, never a description of it. If you are not sure of the exact command, search_memory for it first.
         - Only type, click or add things when \(owner) asked for that.
         - As soon as the request is done, use answer and say what you did or found.
@@ -92,7 +95,8 @@ public final class Agent {
         where is the share button? -> {"plan":"Point at Share","action":"point","target":12,"text":"It's right here, the Share button in the toolbar."}
         what does the manual say about filter changes? -> {"plan":"Check the manual","action":"search_memory","target":0,"text":"filter change procedure"}
         (after the search returned the procedure) -> {"plan":"Tell the steps","action":"answer","target":0,"text":"Swap the filter every 30 days: power down the fan, pull the tray, and seat the new one."}
-        flush the DNS cache (a terminal is in front) -> {"plan":"Type the flush command","action":"type","target":0,"text":"sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder"}
+        open a terminal and flush the DNS cache -> {"plan":"Open the Terminal app","action":"open_app","target":0,"text":"Terminal"}
+        (after Terminal is open and in front) -> {"plan":"Type the flush command","action":"type","target":0,"text":"sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder"}
         (after the command was typed) -> {"plan":"Run it","action":"key","target":0,"text":"return"}
         (after the terminal showed Password:) -> {"plan":"Report back","action":"answer","target":0,"text":"I ran the flush command. The terminal is asking for your password to finish."}
         remind me to call Sam tomorrow at 9 -> {"plan":"Add the reminder","action":"add_reminder","target":0,"text":"Call Sam | tomorrow 9am"}
@@ -107,7 +111,7 @@ public final class Agent {
     public func run(_ text: String, app: NSRunningApplication? = nil) async {
         let req = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !req.isEmpty, !running else { return }
-        running = true; cancelled = false; request = req; steps = []; answer = ""
+        running = true; cancelled = false; request = req; steps = []; answer = ""; lastVerdict = ""
         let t0 = now()
         defer { running = false; turnSecs = now() - t0; stage?.rest() }
         target = app ?? Screen.targetApp(excluding: ownBundle)
@@ -137,7 +141,8 @@ public final class Agent {
             promptTokens = r.promptTokens
 
             if action == "answer" {
-                answer = txt.isEmpty ? (say.isEmpty ? "Done." : say) : txt
+                let proposed = txt.isEmpty ? (say.isEmpty ? "Done." : say) : txt
+                answer = await verified(req, proposed: proposed)
                 await stage?.speak(answer); return
             }
             // The same step twice means it is stuck: summarize and stop.
@@ -161,8 +166,61 @@ public final class Agent {
         let schema: [String: Any] = ["type": "object", "properties": ["say": ["type": "string"]], "required": ["say"], "additionalProperties": false]
         let r = try? await bonsai.json(system: "You are Onboard, \(owner)'s assistant. Answer only in JSON.",
                                        user: "Request: \(req)\nWhat you did and found (this really happened):\n\(history())\n\nTell \(owner) the result in one or two short spoken sentences, using only what is above. JSON: say.", schema: schema, maxTokens: 100)
-        answer = (r?.json["say"] as? String) ?? "Done."
+        answer = await verified(req, proposed: (r?.json["say"] as? String) ?? "Done.")
         await stage?.speak(answer)
+    }
+
+    static let changing: Set<String> = ["type", "click", "menu", "key", "open_app"]
+
+    /// Check the work before reporting: re-read the screen, compare it with the request and the step results, and let a
+    /// strict second pass write the reply. The actor's own "done" is never trusted on its own.
+    func verified(_ req: String, proposed: String) async -> String {
+        let acted = steps.filter { Self.changing.contains($0.action) }
+        guard !acted.isEmpty else { return proposed }                      // pure questions have nothing to verify on screen
+        var check = AgentStep(action: "verify", detail: "Re-reading the screen", say: "Checking my work")
+        steps.append(check)
+        stage?.thought("Checking my work")
+        let t0 = now()
+        var screen = "(no window)"
+        if let app = Screen.allowForeground ? (Screen.targetApp(excluding: ownBundle) ?? target) : target, let snap = Screen.snapshot(app, menusFrom: lastSnapshot) {
+            await stage?.scan(window: snap.windowFrame, elements: snap.elements.filter { $0.role != "text" })
+            let full = Screen.visibleText(app)
+            screen = snap.text(maxActions: 25, maxText: 500) + "\nLatest text in the window:\n" + String(full.suffix(700))
+        }
+        // Hard facts the model cannot talk its way around.
+        var facts: [String] = []
+        let typedCommand = acted.contains { $0.action == "type" && $0.result.contains("NOT run yet") }
+        let ran = acted.contains { $0.result.hasPrefix("Ran it") }
+        if typedCommand && !ran { facts.append("A command was typed but never run (return was not pressed).") }
+        let failures = acted.filter { $0.result.hasPrefix("FAILED") }
+        if !failures.isEmpty { facts.append("\(failures.count) step(s) failed: " + failures.map { $0.result.prefix(110) }.joined(separator: " | ")) }
+        if acted.allSatisfy({ $0.result.hasPrefix("FAILED") || $0.result.contains("nothing visibly changed") }) { facts.append("No step had a confirmed effect.") }
+
+        let schema = "{\"type\":\"object\",\"properties\":{\"evidence\":{\"type\":\"string\"},\"verdict\":{\"type\":\"string\",\"enum\":[\"done\",\"partly\",\"not_done\"]},\"reply\":{\"type\":\"string\"}},\"required\":[\"evidence\",\"verdict\",\"reply\"],\"additionalProperties\":false}"
+        let sys = """
+        You are a strict checker for an assistant that operates a Mac for \(owner). Judge only from the evidence: the step results and what is on screen now.
+        - done: the screen or a result proves the request was fully carried out.
+        - partly: some of it happened. not_done: it did not happen, or there is no proof.
+        A typed command that was never run is not done. Text typed into the wrong place (for example a browser address bar) is not done. If the terminal shows Password: the command is waiting for a password, which is partly.
+        evidence: under 20 words, what proves your verdict. reply: one or two short spoken sentences to \(owner) saying honestly what happened and, if not done, what is left. JSON only.
+        """
+        let user = "Request: \(req)\n\nSteps and results:\n\(history())\n\nKnown facts:\n\(facts.isEmpty ? "(none)" : facts.joined(separator: "\n"))\n\nScreen now:\n\(screen)\n\nThe assistant wants to say: \"\(proposed)\"\n\nJSON: evidence, verdict, reply."
+        var verdict = "done", reply = proposed, evidence = ""
+        if let r = try? await bonsai.json(system: sys, user: user, schemaJSON: schema, maxTokens: 150) {
+            verdict = r.json["verdict"] as? String ?? "done"
+            evidence = r.json["evidence"] as? String ?? ""
+            if let rp = r.json["reply"] as? String, !rp.isEmpty { reply = rp }
+        }
+        // The hard facts win over the model.
+        if !facts.isEmpty && verdict == "done" {
+            verdict = "not_done"
+            reply = typedCommand && !ran ? "I typed the command but it has not run yet, so the task is not finished." : "That did not work: " + (failures.first.map { String($0.result.dropFirst(8).prefix(120)) } ?? "I could not confirm any change on screen.")
+        }
+        check.result = (verdict == "done" ? "Confirmed" : verdict == "partly" ? "Partly done" : "Not done") + (evidence.isEmpty ? "" : ": " + evidence)
+        check.secs = now() - t0; check.done = true
+        if let i = steps.firstIndex(where: { $0.id == check.id }) { steps[i] = check }
+        lastVerdict = verdict
+        return reply
     }
 
     static let terminals: Set<String> = ["Terminal", "iTerm2", "iTerm", "Ghostty", "Warp", "kitty", "Alacritty", "cmux"]
@@ -207,6 +265,10 @@ public final class Agent {
             // Real key presses into the app.
             guard await Screen.bringForward(app) else { return ("FAILED: could not bring \(app.localizedName ?? "the app") to the front, nothing was typed", false) }
             if let point, !isTerminal { Screen.click(at: point) ; try? await Task.sleep(nanoseconds: 120_000_000) }
+            // A shell command must go to a terminal prompt, never to an address bar or a search field.
+            if isTerminal, ["AXTextField", "AXComboBox", "AXSearchField"].contains(Screen.focusedRole(app)) {
+                return ("FAILED: the keyboard focus is in a text box (an address or search bar), not at a terminal prompt. Nothing was typed. Open the Terminal app with open_app instead.", false)
+            }
             Screen.type(text)
             try? await Task.sleep(nanoseconds: 350_000_000)
             guard Self.appeared(text, before: before, after: Screen.visibleText(app)) else {

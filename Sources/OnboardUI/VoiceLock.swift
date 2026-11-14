@@ -2,6 +2,9 @@ import AppKit
 import Foundation
 import Observation
 import OnboardCore
+import os
+
+private let voiceLog = Logger(subsystem: "net.arshsingh.onboard", category: "voice")
 
 /// Voice lock and always-listening, on Argmax SpeakerKit: Onboard learns the owner's voice from a few seconds of
 /// speech, then only that voice can give it orders. With always-listening on, saying "Onboard, ..." starts a request
@@ -28,7 +31,7 @@ import OnboardCore
 
     @ObservationIgnored private var spk: SpeakerIdentifier?
     @ObservationIgnored private let capture = AudioCapture()
-    @ObservationIgnored private let vad = EnergyVAD(threshold: 0.012)
+    @ObservationIgnored private let vad = EnergyVAD(threshold: 0.005)
     @ObservationIgnored private var listening = false
     @ObservationIgnored private var enrollSamples: [Float] = []
     @ObservationIgnored private let lock = NSLock()
@@ -52,6 +55,7 @@ import OnboardCore
     func isOwner(_ audio: [Float]) async -> Bool {
         guard lockEnabled, enrolled, let spk else { return true }
         guard let v = try? await spk.identify(audio) else { return false }
+        voiceLog.notice("voice distance to owner: \(v.d1)")
         return v.d1 < Self.ownerDistance
     }
 
@@ -96,7 +100,8 @@ import OnboardCore
 
     /// "Onboard, open my notes" / "Hey Onboard ..." (Whisper often writes "on board").
     static func command(in text: String) -> String? {
-        let pattern = #"^\s*(?:hey|ok|okay|yo)?[\s,]*on[\s-]?board\b[\s,.!:;]*"#
+        // Whisper spells the name many ways: Onboard, on board, On-board, Unboard, Onbord, aboard, on bored.
+        let pattern = #"^\W*(?:(?:hey|hi|ok|okay|yo|so)\W+)?(?:on[\s-]?boa?r[de]{1,2}|on[\s-]?bored|un[\s-]?board|aboard|on[\s-]?bord)\b\W*"#
         guard let re = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
               let m = re.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)), let r = Range(m.range, in: text) else { return nil }
         let rest = text[r.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
@@ -112,7 +117,7 @@ import OnboardCore
                 Task { @MainActor in await self.handle(u) }
             }
         }
-        do { try capture.start() } catch { listening = false }
+        do { try capture.start(); voiceLog.notice("always listening started") } catch { listening = false; voiceLog.error("always listening could not start the mic") }
     }
 
     func stopListening() {
@@ -122,11 +127,17 @@ import OnboardCore
     }
 
     private func handle(_ u: EnergyVAD.Utterance) async {
-        guard canListen(), u.duration >= 0.7, u.duration < 20, let t = transcriber() else { return }
+        guard canListen() else { voiceLog.notice("utterance skipped: busy"); return }
+        guard u.duration >= 0.6, u.duration < 20, let t = transcriber() else { return }
         guard let text = try? await t.transcribe(u.audio), !text.isEmpty else { return }
-        guard let cmd = Self.command(in: text) else { return }           // not addressed to Onboard: ignored, not kept
         lastHeard = text
-        guard await isOwner(u.audio) else { onRejected?(); return }
+        guard let cmd = Self.command(in: text) else {
+            voiceLog.notice("heard, no wake word: \(text, privacy: .public)")
+            return                                                      // not addressed to Onboard: ignored, not kept
+        }
+        let owner = await isOwner(u.audio)
+        voiceLog.notice("wake word heard, owner=\(owner): \(cmd, privacy: .public)")
+        guard owner else { onRejected?(); return }
         guard canListen() else { return }
         onCommand?(cmd)
     }
