@@ -39,5 +39,5 @@ if args.count > 2, args[1] == "snap" {
     }
     dispatchMain()
 } else {
-    OnboardApp.run()
+    MainActor.assumeIsolated { OnboardApp.run() }
 }
