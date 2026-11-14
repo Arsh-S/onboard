@@ -15,3 +15,10 @@ public enum Theme {
     public static let snappy = Animation.spring(response: 0.25, dampingFraction: 1.0)
     public static let pop = Animation.spring(response: 0.4, dampingFraction: 0.6)
 }
+
+/// Overlay additions.
+public extension Theme {
+    static let accentBright = Color(red: 0.369, green: 0.918, blue: 0.831)          // #5EEAD4, top of the cursor gradient
+    static let ink = Color(red: 0.016, green: 0.137, blue: 0.118)                   // dark text on teal
+    static let surface = Color(red: 0.082, green: 0.094, blue: 0.090)               // card fill (solid, no material)
+}
