@@ -74,7 +74,7 @@ if args.count > 2, args[1] == "snap" {
     dispatchMain()
 } else if args.count > 2, args[1] == "relaytest" {
     // What would be passed on for each request ("-" when it is not a pass-it-on request).
-    for r in args.dropFirst(2) { print((Agent.relayMessage(r) ?? Agent.wifiRequest(r).map { "wifi \($0 ? "on" : "off")" } ?? Agent.quickEntry(r).map { "\($0.event ? "EVENT" : "REMINDER") [\($0.title)] when [\($0.when)] -> \(Tools.date($0.when).map { $0.formatted(date: .abbreviated, time: .shortened) } ?? "no time")" } ?? "-") + "    <=  " + r) }
+    for r in args.dropFirst(2) { print((Agent.relayMessage(r) ?? Agent.textRequest(r).map { "TEXT [\($0.to)] [\($0.body)]" } ?? Agent.wifiRequest(r).map { "wifi \($0 ? "on" : "off")" } ?? Agent.quickEntry(r).map { "\($0.event ? "EVENT" : "REMINDER") [\($0.title)] when [\($0.when)] -> \(Tools.date($0.when).map { $0.formatted(date: .abbreviated, time: .shortened) } ?? "no time")" } ?? "-") + "    <=  " + r) }
     exit(0)
 } else if args.count > 2, args[1] == "mem" {
     Task { @MainActor in

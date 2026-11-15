@@ -304,6 +304,34 @@ public final class Agent {
         return (event, title.prefix(1).uppercased() + title.dropFirst(), when)
     }
 
+    /// "Text Jared hi", "message Maya saying I'm running late", "send a text to Sam that dinner is at 7":
+    /// (who, what). nil when it is not a request to text a person.
+    nonisolated public static func textRequest(_ request: String) -> (to: String, body: String)? {
+        let pattern = #"^\W*(?:(?:hey|ok|okay|so)\W+)?(?:on[\s-]?board\W+)?(?:(?:can|could|would|will) you (?:please )?|please )?(?:(?:send|write|draft|shoot) (?:an? )?(?:text|message|imessage)(?: message)? to|text|message|imessage)\s+(.+)$"#
+        guard let re = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+              let m = re.firstMatch(in: request, range: NSRange(request.startIndex..., in: request)), let r = Range(m.range(at: 1), in: request) else { return nil }
+        let rest = String(request[r]).trimmingCharacters(in: .whitespacesAndNewlines)
+        // "this chat", "the assistant": that is passing a message to an app, handled elsewhere.
+        if rest.range(of: #"^(this|the|that|my|our|it|them|him|her)\b"#, options: [.regularExpression, .caseInsensitive]) != nil { return nil }
+        var to = "", body = ""
+        if let sep = rest.range(of: #"\s*(?:,|:|\bsaying\b|\bthat says\b|\band say\b|\band tell (?:him|her|them)\b|\bto say\b|\bthat\b)\s*"#, options: [.regularExpression, .caseInsensitive]) {
+            to = String(rest[..<sep.lowerBound]); body = String(rest[sep.upperBound...])
+        } else {
+            // No joining word: the first word is the name, unless the second is also capitalized ("Jared Smith hi").
+            let words = rest.split(separator: " ").map(String.init)
+            guard words.count >= 2 else { return nil }
+            let two = words.count >= 3 && words[1].first?.isUppercase == true && words[1].count > 2 && !["Hi", "Hey", "Hello", "Yo", "Sup", "Can", "Are", "The", "That", "What", "Where", "When", "How"].contains(words[1])
+            to = words.prefix(two ? 2 : 1).joined(separator: " "); body = words.dropFirst(two ? 2 : 1).joined(separator: " ")
+        }
+        to = to.trimmingCharacters(in: CharacterSet(charactersIn: " .,")); body = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !to.isEmpty, to.split(separator: " ").count <= 3, !body.isEmpty else { return nil }
+        // "..., but don't send it" is an instruction to Onboard, not part of the message (it never sends anyway).
+        body = body.replacingOccurrences(of: #"[,.]?\s*(?:but |and )?(?:do not|don't|dont) (?:send|text)(?: it| that| yet)?[.!]?\s*$"#, with: "", options: [.regularExpression, .caseInsensitive])
+        if body.count >= 2, body.last == ".", body.split(separator: " ").count <= 3 { body.removeLast() }      // "Hi." -> "Hi"
+        guard !body.isEmpty else { return nil }
+        return (to, body.prefix(1).uppercased() + body.dropFirst())
+    }
+
     /// "Turn the WiFi off", "switch wifi on", "disable Wi-Fi": true for on, false for off, nil for anything else.
     nonisolated public static func wifiRequest(_ request: String) -> Bool? {
         let l = request.lowercased()
@@ -362,6 +390,16 @@ public final class Agent {
             let r = q.event ? await Tools.addEvent(q.title, when: q.when) : await Tools.addReminder(q.title, when: q.when)
             lastVerdict = "done"
             await summarizeAfter(r); return
+        }
+        if let t = Self.textRequest(req) {
+            // Texting a person goes straight to a draft in Messages, addressed from Contacts. It is never sent.
+            var step = AgentStep(action: "draft_message", detail: "\(t.to) · \(t.body.prefix(60))", say: "Drafting a message to \(t.to)")
+            steps.append(step); stage?.thought(step.say)
+            let t0 = now()
+            let (r, _) = await perform("draft_message", 0, "\(t.to) | \(t.body)", step.say, snap, &step)
+            steps[steps.count - 1].secs = now() - t0; steps[steps.count - 1].done = true
+            lastVerdict = r.hasPrefix("Not approved") ? "" : "done"
+            return
         }
         if let on = Self.wifiRequest(req) {
             var step = AgentStep(action: "wifi", detail: on ? "on" : "off", say: "Turning WiFi \(on ? "on" : "off")")
