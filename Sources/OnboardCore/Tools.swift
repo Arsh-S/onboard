@@ -43,6 +43,14 @@ public enum Tools {
         return detect(s)
     }
 
+    /// The part of a sentence that names a time ("Friday at noon", "tomorrow at 9", "in 20 minutes"), if any.
+    public static func timePhrase(in s: String) -> String? {
+        let ns = s as NSString
+        if let d = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.date.rawValue), let m = d.firstMatch(in: s, range: NSRange(location: 0, length: ns.length)) { return ns.substring(with: m.range) }
+        if let re = try? NSRegularExpression(pattern: #"\bin\s+(?:\d+(?:\.\d+)?|an?|[a-z]+)\s+(?:minute|min|hour|hr|day|week)s?\b"#, options: [.caseInsensitive]), let m = re.firstMatch(in: s, range: NSRange(location: 0, length: ns.length)) { return ns.substring(with: m.range) }
+        return nil
+    }
+
     static func detect(_ s: String) -> Date? {
         guard !s.isEmpty, let d = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.date.rawValue) else { return nil }
         return d.firstMatch(in: s, range: NSRange(s.startIndex..., in: s))?.date

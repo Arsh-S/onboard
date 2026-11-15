@@ -279,6 +279,31 @@ public final class Agent {
         return msg
     }
 
+    /// A plainly worded reminder or calendar request, taken apart without the model: (is it an event, title, time phrase).
+    /// "Add lunch with Jared to my calendar Friday at noon" -> (true, "Lunch with Jared", "Friday at noon").
+    /// An empty title means the request named nothing to remember. nil means it is not one of these.
+    nonisolated public static func quickEntry(_ request: String) -> (event: Bool, title: String, when: String)? {
+        let lead = #"^\W*(?:(?:hey|ok|okay|so)\W+)?(?:on[\s-]?board\W+)?(?:(?:can|could|would|will) you (?:please )?|please )?"#
+        func groups(_ pattern: String) -> [String]? {
+            guard let re = try? NSRegularExpression(pattern: lead + pattern, options: [.caseInsensitive]),
+                  let m = re.firstMatch(in: request, range: NSRange(request.startIndex..., in: request)) else { return nil }
+            return (1..<m.numberOfRanges).map { Range(m.range(at: $0), in: request).map { String(request[$0]) } ?? "" }
+        }
+        var event = false, body = ""
+        if let g = groups(#"(?:add|put|schedule|create|book|set up)\s+(?:an?\s+)?(?:event\s+|meeting\s+)?(?:for\s+|called\s+)?(.+?)\s+(?:to|on|in|into)\s+(?:my\s+|the\s+)?calendar\b(.*)$"#) { event = true; body = g[0] + " " + g[1] }
+        else if let g = groups(#"(?:remind me|set (?:me )?a reminder|add a reminder|make a reminder)\b(?:\s+(?:to|about|that|for))?\s*(.*)$"#) { body = g[0] }
+        else { return nil }
+        let when = Tools.timePhrase(in: body) ?? ""
+        // A time the detector could not read ("at 5"): leave the request to the model rather than drop the time.
+        if when.isEmpty, body.range(of: #"\b(?:at|by|around)\s+\d"#, options: [.regularExpression, .caseInsensitive]) != nil { return nil }
+        var title = when.isEmpty ? body : body.replacingOccurrences(of: when, with: " ")
+        title = title.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression).trimmingCharacters(in: CharacterSet(charactersIn: " .,?!"))
+        for _ in 0..<3 { for tail in [" at", " on", " by", " for", " in", " this", " next", " to"] where title.lowercased().hasSuffix(tail) { title = String(title.dropLast(tail.count)) } }
+        for head in ["to ", "about ", "that "] where title.lowercased().hasPrefix(head) { title = String(title.dropFirst(head.count)) }
+        title = title.trimmingCharacters(in: CharacterSet(charactersIn: " .,?!"))
+        return (event, title.prefix(1).uppercased() + title.dropFirst(), when)
+    }
+
     /// "Turn the WiFi off", "switch wifi on", "disable Wi-Fi": true for on, false for off, nil for anything else.
     nonisolated public static func wifiRequest(_ request: String) -> Bool? {
         let l = request.lowercased()
@@ -328,6 +353,16 @@ public final class Agent {
         if let s = snap { await stage?.scan(window: s.windowFrame, elements: s.elements.filter { $0.role != "text" }) }
         firstScreen = snap.map { render($0, previous: []) } ?? "(no window)"
         if let message = Self.relayMessage(req), target != nil { await relay(message, snap: snap); return }
+        if let q = Self.quickEntry(req), !(q.event && q.when.isEmpty && !q.title.isEmpty) {
+            // Said plainly enough to do directly: no screen reading, no guessing which app to open.
+            let what = q.event ? "event" : "reminder"
+            if q.title.isEmpty { answer = "What should the \(what) say, and when?"; await stage?.speak(answer); return }
+            let step = AgentStep(action: q.event ? "add_event" : "add_reminder", detail: q.title + (q.when.isEmpty ? "" : " · " + q.when), say: q.event ? "Adding to the calendar" : "Adding a reminder")
+            steps.append(step); stage?.thought(step.say)
+            let r = q.event ? await Tools.addEvent(q.title, when: q.when) : await Tools.addReminder(q.title, when: q.when)
+            lastVerdict = "done"
+            await summarizeAfter(r); return
+        }
         if let on = Self.wifiRequest(req) {
             var step = AgentStep(action: "wifi", detail: on ? "on" : "off", say: "Turning WiFi \(on ? "on" : "off")")
             steps.append(step); stage?.thought(step.say)
