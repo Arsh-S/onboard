@@ -169,7 +169,9 @@ public final class Agent {
     /// fills a request that names nothing ("remind me") with the example from its instructions.
     func inventedWords(_ text: String) -> (unknown: [String], total: Int) {
         let filler: Set<String> = ["remind", "reminder", "the", "and", "for", "with", "about", "that", "this", "event", "add", "set", "new"]
-        let seen = shown.lowercased()
+        // Only the request and the selected text count here, not the screen: with a document or a chat in front,
+        // almost any words are "on screen" (a script that mentions a dentist turned "remind me" into a dentist reminder).
+        let seen = (request + " " + startSelection).lowercased()
         let words = text.lowercased().split { !$0.isLetter }.map(String.init).filter { $0.count > 2 && !filler.contains($0) }
         return (words.filter { !seen.contains($0) }, words.count)
     }
