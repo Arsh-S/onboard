@@ -42,8 +42,17 @@ public final class Transcriber: @unchecked Sendable {
     public func transcribe(_ audio: [Float], context: String? = nil) async throws -> String {
         var o = decodeOptions
         o.promptTokens = prompt(context: context)
-        let r = try await wk.transcribe(audioArray: audio, decodeOptions: o)
+        let r = try await wk.transcribe(audioArray: Self.padded(audio), decodeOptions: o)
         return r.map { $0.text }.joined().trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// WhisperKit returns nothing for clips of about half a second (a lone "Onboard"), so short audio gets
+    /// silence on both sides up to 1.5 s.
+    static func padded(_ audio: [Float]) -> [Float] {
+        let want = SR * 3 / 2
+        guard !audio.isEmpty, audio.count < want else { return audio }
+        let pad = (want - audio.count + 1) / 2
+        return [Float](repeating: 0, count: pad) + audio + [Float](repeating: 0, count: pad)
     }
 
     public struct Word: Sendable { public let text: String; public let start: Float; public let end: Float }

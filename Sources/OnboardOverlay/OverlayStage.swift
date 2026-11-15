@@ -19,6 +19,7 @@ import OnboardCore
     private var steps = 0
     private var resting = true          // true between runs: the next call starts a fresh run
     private var restGen = 0             // invalidates pending fade-outs when a new run starts
+    private var suppressed = false      // the user dismissed the overlay mid-run: draw nothing until that run ends
     private var screenObserver: NSObjectProtocol?
 
     public init() {}
@@ -95,6 +96,7 @@ import OnboardCore
     public func speak(_ text: String) async { await onSpeak?(text) }
 
     public func approve(_ question: String, detail: String) async -> Bool {
+        if suppressed { return false }      // a dismissed run never gets a yes
         // With no screen to ask on, behave like the headless default.
         guard begin(), let screen = NSScreen.screens.first else { return true }
         model.set(.waiting)
@@ -109,18 +111,32 @@ import OnboardCore
         return ok
     }
 
+    /// The user sent Onboard away (Option-Space): everything on the overlay goes now. If a run is still in flight,
+    /// its remaining drawing calls are ignored until it ends.
+    public func dismiss() {
+        if !resting { suppressed = true }
+        restGen += 1
+        approval?.decide(false); approval = nil
+        model.dim = false
+        model.set(.idle)
+        model.steps = []; model.bubble = nil; model.target = nil; model.ripples = []
+        model.cursorVisible = false
+        panel?.orderOut(nil)
+    }
+
     public func rest() {
+        if suppressed { suppressed = false; resting = true; restGen += 1; return }
         model.set(.idle)
         resting = true
         restGen += 1
         let gen = restGen
         Task { [weak self] in
-            // Dots, bubble and target fade about 2 s after the task ends; the cursor after about 6 s idle.
-            await self?.pause(2)
+            // Dots, bubble and target fade just under a second after the task ends; the cursor about a second later.
+            await self?.pause(0.8)
             guard let self, gen == self.restGen else { return }
             withAnimation(.easeOut(duration: 0.4)) { self.model.steps = []; self.model.bubble = nil }
             if var old = self.model.target, old.end == nil { old.end = Date(); self.model.target = old }
-            await self.pause(4)
+            await self.pause(1.2)
             guard gen == self.restGen else { return }
             withAnimation(.easeOut(duration: 0.5)) { self.model.cursorVisible = false }
             await self.pause(0.6)
@@ -154,7 +170,7 @@ import OnboardCore
     /// Called at the top of every drawing call: starts a fresh run if the last one ended, makes sure the overlay window
     /// is up (never activating the app) and the cursor is visible. False when there is no screen to draw on.
     @discardableResult private func begin() -> Bool {
-        guard let screen = NSScreen.screens.first else { return false }
+        guard !suppressed, let screen = NSScreen.screens.first else { return false }
         if resting {
             resting = false; restGen += 1; steps = 0
             model.takeover = Date()          // the grid wave that says "Onboard has the screen"

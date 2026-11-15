@@ -213,6 +213,12 @@ final class AppModel {
         query = ""; answer = ""; showTurn = true; gotReply = false
         runStart = CFAbsoluteTimeGetCurrent()
         setPill(.thinking)
+        // What was heard shows for a moment, then the pill goes back to plain dots for the rest of the run.
+        let token = pillToken
+        Task {
+            try? await Task.sleep(nanoseconds: 2_500_000_000)
+            if pillToken == token { liveTranscript = "" }
+        }
         onShowCompact?()
         Task {
             await agent.run(req, app: app)
@@ -222,7 +228,13 @@ final class AppModel {
 
     func submit() { run(query, app: targetApp) }
 
-    func stop() { agent.cancel() }
+    func stop() { agent.cancel(); clearScreen() }
+
+    /// Option-Space sends Onboard away: the cursor overlay and the pill go at once, not when the current step returns.
+    func clearScreen() {
+        OverlayStage.shared.dismiss()
+        if recording == nil, pill != .speaking { setPill(.idle); liveTranscript = "" }
+    }
 
     private func turnEnded() {
         // The footer keeps the measured generation speed; per-request figures include prompt reading and would understate it.

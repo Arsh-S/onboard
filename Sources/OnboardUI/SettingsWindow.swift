@@ -119,10 +119,12 @@ struct SettingsView: View {
                                 Text(data.voiceEnrolled ? "Onboard knows your voice" : "Teach Onboard your voice").font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.primary)
                                 Text(data.voiceEnrolling ? data.voiceMessage : data.voiceMessage.isEmpty ? (data.voiceReady ? (data.voiceEnrolled ? "Train again any time. \(data.voiceLast)" : "A one minute guided training. Argmax SpeakerKit, on this Mac.") : "Loading the voice model") : data.voiceMessage)
                                     .font(.system(size: data.voiceEnrolling ? 14 : 12, weight: data.voiceEnrolling ? .semibold : .regular))
-                                    .foregroundStyle(data.voiceEnrolling ? Theme.accent : Theme.secondary).lineLimit(2)
+                                    .foregroundStyle(data.voiceEnrolling ? Theme.accent : Theme.secondary)
+                                    .lineLimit(4).multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
                                 if data.voiceEnrolling { ProgressView(value: data.voiceProgress).tint(Theme.accent).frame(width: 170) }
                             }
-                            Spacer()
+                            .layoutPriority(1)
+                            Spacer(minLength: 8)
                             if data.voiceCanLearn && !data.voiceEnrolling {
                                 Button("That was me") { act.learnVoice() }
                                     .buttonStyle(.plain).font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.primary)

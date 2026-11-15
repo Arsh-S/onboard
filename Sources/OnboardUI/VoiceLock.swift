@@ -102,11 +102,25 @@ private let voiceLog = Logger(subsystem: "net.arshsingh.onboard", category: "voi
 
     private func trainSample(_ u: EnergyVAD.Utterance) async {
         guard enrolling, u.duration >= 0.3, let spk else { return }
-        if let t = transcriber(), let text = try? await t.transcribe(u.audio), Self.isNoise(text) { return }   // a cough or a click is not a sample
+        let prompt = Self.trainPrompts[min(trainStep, Self.trainPrompts.count - 1)]
+        if let t = transcriber(), let text = try? await t.transcribe(u.audio), Self.isNoise(text) {             // a cough or a click is not a sample
+            voiceLog.notice("training: clip of \(u.duration) s was noise")
+            if enrolling { enrollMessage = "I did not catch that.  " + prompt }
+            return
+        }
         guard enrolling else { return }
         let name = ownerName()
-        if trainFresh { for p in spk.names { try? spk.remove(name: p) }; trainFresh = false }
-        do { try await spk.addSample(name: name, audio: u.audio, weight: u.duration > 2 ? 2 : 1) } catch { return }
+        // The old profile is only replaced once a new sample has actually been taken.
+        do {
+            let fresh = trainFresh
+            if fresh { for p in spk.names { try? spk.remove(name: p) } }
+            try await spk.addSample(name: name, audio: u.audio, weight: u.duration > 2 ? 2 : 1)
+            trainFresh = false
+        } catch {
+            voiceLog.notice("training: clip of \(u.duration) s gave no voice print: \(String(describing: error), privacy: .public)")
+            if enrolling { enrollMessage = "A little longer or louder.  " + prompt }
+            return
+        }
         trainStep += 1
         enrolled = true
         enrollProgress = Double(trainStep) / Double(Self.trainPrompts.count)

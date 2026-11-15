@@ -526,8 +526,8 @@ extension AppModel {
     func toggle() {
         if !isVisible { open() }
         else if model.agent.running { model.stop(); close() }
-        else if model.compact { fadeOut { [weak self] in self?.open() } }
-        else { close() }
+        else if model.compact { model.clearScreen(); fadeOut { [weak self] in self?.open() } }
+        else { model.clearScreen(); close() }
     }
 
     func open() {

@@ -297,6 +297,7 @@ public final class Agent {
                 answer = "I can't reach Bonsai. Is LM Studio running?"; await stage?.speak(answer); return
             }
             promptTokens = r.promptTokens
+            if cancelled { answer = "Stopped."; return }      // stopped while the model was thinking: do not act on its reply
             let action = r.json["action"] as? String ?? "done"
             var tid = r.json["target"] as? Int ?? 0
             let label = (r.json["target_label"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)

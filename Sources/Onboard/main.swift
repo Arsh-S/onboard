@@ -38,6 +38,37 @@ if args.count > 2, args[1] == "snap" {
         exit(0)
     }
     dispatchMain()
+} else if args.count > 2, args[1] == "voicetest" {
+    // Replays a wav through the voice-training path (speech detection, noise check, add sample) with timings.
+    Task {
+        do {
+            let base = URL(fileURLWithPath: NSHomeDirectory() + "/Library/Application Support/Tableside/huggingface")
+            let audio = try loadAudio16k(URL(fileURLWithPath: args[2]))
+            var t0 = Date()
+            let tr = try await Transcriber(downloadBase: base); print(String(format: "whisper loaded %.1fs", Date().timeIntervalSince(t0))); t0 = Date()
+            let sk = try await SpeakerKitLoader.load(downloadBase: base); print(String(format: "speakerkit loaded %.1fs", Date().timeIntervalSince(t0)))
+            let spk = SpeakerIdentifier(sk: sk, storeURL: URL(fileURLWithPath: NSTemporaryDirectory() + "voicetest_\(getpid()).json"))
+            let vad = EnergyVAD(threshold: Float(opt("--threshold") ?? "") ?? 0.006); vad.minUtterance = 0.3
+            var clips: [EnergyVAD.Utterance] = []
+            var i = 0
+            while i < audio.count { clips += vad.feed(Array(audio[i..<min(i + 8000, audio.count)])); i += 8000 }
+            clips += vad.feed([Float](repeating: 0, count: 16000))
+            print(String(format: "%.1fs of audio, %d clips detected", Double(audio.count) / 16000, clips.count))
+            if let first = clips.first, let n = Int(opt("--short") ?? "") {     // also try the first n tenths of a second on its own (a single word)
+                var short = first; short.audio = Array(first.audio.prefix(n * 1600)); short.start = 0; short.end = Double(n) / 10
+                clips.insert(short, at: 0)
+            }
+            for u in clips {
+                t0 = Date()
+                let text = (try? await tr.transcribe(u.audio)) ?? "<transcribe failed>"
+                let t1 = Date().timeIntervalSince(t0); t0 = Date()
+                do { try await spk.addSample(name: "Test", audio: u.audio); print(String(format: "clip %.1fs: transcribe %.1fs, add sample %.1fs, text: %@", u.duration, t1, Date().timeIntervalSince(t0), text)) }
+                catch { print(String(format: "clip %.1fs: transcribe %.1fs, add sample FAILED after %.1fs (%@), text: %@", u.duration, t1, Date().timeIntervalSince(t0), "\(error)", text)) }
+            }
+        } catch { print("voicetest failed: \(error)") }
+        exit(0)
+    }
+    dispatchMain()
 } else if args.count > 2, args[1] == "mem" {
     Task { @MainActor in
         let mem = MemoryIndex(folders: [supportDir.appendingPathComponent("memory")], store: supportDir.appendingPathComponent("memory_index.json"))
