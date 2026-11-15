@@ -185,7 +185,8 @@ private let voiceLog = Logger(subsystem: "net.arshsingh.onboard", category: "voi
             guard let self else { return }
             self.calibrate(chunk)
             for u in self.vad.feed(chunk) {
-                Task { @MainActor in await self.handle(u) }
+                let at = Date()                                   // when the sentence ended (plus the closing pause)
+                Task { @MainActor in await self.handle(u, endedAt: at) }
             }
         }
         capture.onLevel = { [weak self] rms in
@@ -234,7 +235,7 @@ private let voiceLog = Logger(subsystem: "net.arshsingh.onboard", category: "voi
         return ["cancel", "cancel that", "cancel it", "stop", "stop that", "stop it", "never mind", "nevermind", "abort", "no stop", "no cancel"].contains(phrase)
     }
 
-    private func handle(_ u: EnergyVAD.Utterance) async {
+    private func handle(_ u: EnergyVAD.Utterance, endedAt: Date = Date()) async {
         // While Onboard works it takes no new orders, but its owner can still call it off.
         if isWorking() {
             guard u.duration >= 0.3, u.duration < 3, let t = transcriber(), let text = try? await t.transcribe(u.audio), Self.isCancel(text) else { return }
@@ -248,7 +249,10 @@ private let voiceLog = Logger(subsystem: "net.arshsingh.onboard", category: "voi
         guard u.duration >= 0.4, u.duration < 20, let t = transcriber() else { return }
         guard let text = try? await t.transcribe(u.audio), !Self.isNoise(text) else { return }
         lastHeard = text
-        let armed = Date() < armedUntil
+        // Armed means the request was STARTED in time. Judging by when it finished (after a long sentence, the closing
+        // pause and transcription) threw away every request longer than a few words.
+        let began = endedAt.addingTimeInterval(-(u.duration + Self.requestPause + 0.3))
+        let armed = began < armedUntil
         var request: String
         if let rest = Self.command(in: text) {
             if rest.count < 3 {
