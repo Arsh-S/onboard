@@ -68,7 +68,7 @@ public final class Agent {
         """
         You are Onboard. You operate \(owner)'s Mac for them, offline. You see the app in front as a list of elements and act one step at a time.
 
-        Elements: "[12] button "Save"" can be acted on by its number. A leading * means it appeared since your last step (your action caused it: check whether you need it). Lines starting with - are text on screen: use them to verify outcomes. "[40] seen "Play"" is text read from a picture of the window (the app exposes no controls): click it by number like any other element.
+        Elements: "[12] button "Save"" can be acted on by its number. NEW SINCE LAST STEP lists the elements that appeared after your last step (your action caused them: check whether you need them). Lines starting with - are text on screen: use them to verify outcomes. "[40] seen "Play"" is text read from a picture of the window (the app exposes no controls): click it by number like any other element.
 
         Each step, answer with ONE JSON object, fields in this order:
         - prev_result: success, failed or unknown. Did your previous step do what you intended? Judge from CHANGES and the screen, not from hope. Use none on the first step.
@@ -83,7 +83,7 @@ public final class Agent {
         Actions:
         - click: press element target.
         - type: type text into field target (0 = the focused text area). Only the exact words, nothing else.
-        - key: press a key. text = return, tab, escape, save, select all, copy, paste, undo or new.
+        - key: press a key. text = return, tab, escape, save, select all, copy, paste, undo, new or new tab.
         - menu: choose a menu bar command by name. text = for example "New Window".
         - scroll: text = down or up. Reveals more elements.
         - open_app: text = the app name.
@@ -102,7 +102,7 @@ public final class Agent {
         2. Never assume an action succeeded just because you issued it. Check CHANGES and the screen first.
         3. If you typed into a field, you may still need to pick a suggestion, press return, or click a button to complete it.
         4. Handle popups, dialogs and suggestion lists before anything else.
-        5. If the same action failed or changed nothing, do something different. Never repeat it.
+        5. If LAST RESULT starts with FAILED or ERROR, your step did not happen: prev_result is failed. Read what it says and do something different. Never repeat a failed action.
         6. Never send, submit, pay or delete for \(owner). Leave drafts ready and say so. A typed terminal command has not run until return is pressed.
         7. Never invent facts: use search_memory or the screen. For a question about facts, search_memory, then done with the answer.
         8. If any part of the request is unmet, uncertain or unverifiable, done must have success false and say what is left.
@@ -122,7 +122,7 @@ public final class Agent {
         {"prev_result":"none","memory":"The document text is visible.","next_goal":"Answer from the screen","action":"done","target":0,"target_label":"","text":"It says the pump was checked on Sol 211 and pressure is nominal.","success":true}
         TASK: how do I make this bold? (a question about how: explain or point, do not do it)
         {"prev_result":"none","memory":"The user wants to know how, not for me to do it.","next_goal":"Explain where Bold is","action":"done","target":0,"target_label":"","text":"Select the text, then open the Format menu, choose Font, and pick Bold.","success":true}
-        TASK: text Maya that I'm late. ELEMENTS after typing Maya in the To field: *[12] row "Maya Chen" ...
+        TASK: text Maya that I'm late. After typing Maya in the To field: NEW SINCE LAST STEP: [12] row "Maya Chen"
         {"prev_result":"success","memory":"Messages is open, new message started, typed Maya; a suggestion appeared.","next_goal":"Pick Maya Chen from the suggestions","action":"click","target":12,"target_label":"Maya Chen","text":"","success":false}
         TASK: make this sound more professional. SELECTED TEXT: "hey can u send me the numbers asap"
         {"prev_result":"none","memory":"Rewrite the selected text in place.","next_goal":"Replace the selection with a professional version","action":"replace_selection","target":0,"target_label":"","text":"Hello, could you please send me the numbers as soon as possible?","success":false}
@@ -163,7 +163,7 @@ public final class Agent {
     private var firstScreen = ""
 
     func history() -> String {
-        trail.isEmpty ? "(none)" : trail.enumerated().map { "\($0.offset + 1). \($0.element.goal) -> \($0.element.action) -> \($0.element.result.prefix(200))" }.joined(separator: "\n")
+        trail.isEmpty ? "(none)" : trail.enumerated().map { "\($0.offset + 1). \($0.element.goal) -> \($0.element.action) -> \($0.element.result.prefix(110))" }.joined(separator: "\n")
     }
 
     /// Screenshots as a backup sense: text read from a picture when an app exposes almost nothing, and a picture for the final check.
@@ -276,18 +276,24 @@ public final class Agent {
             if stepNo >= maxSteps * 3 / 4 && !lastStep { notes.append("You are running out of steps. Finish what matters and use done.") }
             if lastStep { notes.append("This is the last step. Use done and report honestly what was and was not achieved.") }
             let hints = snap.map { Screen.menuHints($0, for: req) } ?? []
+            let fresh = previousKeys.isEmpty ? [] : (snap?.elements ?? []).filter { $0.id > 0 && !previousKeys.contains($0.role + "|" + $0.label) }
+            // Order matters for speed: the model server only skips re-reading a prompt up to the point where it differs
+            // from the last one. So everything that stays the same while the screen does (task, selection, findings,
+            // the element list) comes first, and what changes every step (memory, last result, changes) comes last.
             let user = """
-            TASK: \(req)\(plan.isEmpty ? "" : "\nPLAN:\n" + planText())\(selected.isEmpty ? "" : "\nSELECTED TEXT: \"" + selected.prefix(900) + "\"")
-            MEMORY: \(memoryNote.isEmpty ? "(empty)" : memoryNote)\(findings.isEmpty ? "" : "\nFOUND SO FAR (real values you have read, use these):\n" + findings.map { "- " + $0 }.joined(separator: "\n"))
+            TASK: \(req)\(plan.isEmpty ? "" : "\nPLAN:\n" + planText())\(selected.isEmpty ? "" : "\nSELECTED TEXT: \"" + selected.prefix(900) + "\"")\(findings.isEmpty ? "" : "\nFOUND SO FAR (real values you have read, use these):\n" + findings.map { "- " + $0 }.joined(separator: "\n"))
+            APP: \(snap?.app ?? "none"). WINDOW: "\(snap?.window ?? "")"
+            ELEMENTS:
+            \(snap.map { render($0, previous: []) } ?? "(no window is open)")
+            Menu commands that may help: \(hints.isEmpty ? "(none)" : hints.prefix(10).joined(separator: "; "))
+
+            TASK (again): \(req.prefix(300))
+            MEMORY: \(memoryNote.isEmpty ? "(empty)" : memoryNote)
             LAST STEPS:
             \(history())
             LAST RESULT: \(lastResult)
-            \(diff)
+            \(diff)\(fresh.isEmpty ? "" : "\nNEW SINCE LAST STEP: " + fresh.prefix(8).map { "[\($0.id)] \($0.role) \"\($0.label.prefix(40))\"" }.joined(separator: "; "))
             \(notes.joined(separator: "\n"))
-            APP: \(snap?.app ?? "none"). WINDOW: "\(snap?.window ?? "")"
-            ELEMENTS:
-            \(snap.map { render($0, previous: previousKeys) } ?? "(no window is open)")
-            Menu commands that may help: \(hints.isEmpty ? "(none)" : hints.prefix(10).joined(separator: "; "))
             Time: \(Date().formatted(date: .abbreviated, time: .shortened)). Step \(stepNo) of \(maxSteps).
             """
             previousKeys = Self.keys(of: snap)
@@ -340,7 +346,8 @@ public final class Agent {
             let signature = "\(action) " + (tid > 0 ? "[\(tid)] \"\(snap?.element(tid)?.label.prefix(40) ?? "")\"" : "\"\(txt.prefix(40))\"")
             if blocked.contains(signature) {
                 consecutiveFailures += 1
-                lastResult = "ERROR: \(signature) is blocked because it did nothing before. Choose a different action or element."
+                lastResult = "ERROR: \(signature) is blocked: it already failed or did nothing. Nothing was done. Choose a different action or element."
+                trail.append(Trail(goal: goal, action: signature, result: lastResult)); if trail.count > 3 { trail.removeFirst() }
                 continue
             }
             // The screen may have moved while the model was thinking: find the same control again.
@@ -359,6 +366,11 @@ public final class Agent {
             let after = await look(Screen.allowForeground ? (Screen.targetApp(excluding: ownBundle) ?? target) : target, menusFrom: snap)
             let effect = Self.changes(snap, after)
             let failed = result.hasPrefix("FAILED") || result.hasPrefix("ERROR")
+            if failed {
+                // A failed step is not tried again as is: at once for actions that fail the same way every time (a menu
+                // command or app that does not exist), on the second identical failure for the rest.
+                if ["menu", "open_app", "key", "click", "scroll"].contains(action) || trail.last?.action == signature { blocked.insert(signature) }
+            }
             if Self.changing.contains(action) {
                 if failed { consecutiveFailures += 1 }
                 else if effect == "CHANGES: none" && !result.hasPrefix("Verified") {
@@ -445,11 +457,11 @@ public final class Agent {
 
     static let terminals: Set<String> = ["Terminal", "iTerm2", "iTerm", "Ghostty", "Warp", "kitty", "Alacritty", "cmux"]
     static let keys: [String: (CGKeyCode, Bool)] = ["return": (36, false), "enter": (36, false), "tab": (48, false), "escape": (53, false), "save": (1, true),
-                                                    "select all": (0, true), "copy": (8, true), "paste": (9, true), "undo": (6, true), "new": (45, true)]
+                                                    "select all": (0, true), "copy": (8, true), "paste": (9, true), "undo": (6, true), "new": (45, true), "new tab": (17, true)]
 
     /// Returns (result text for the model, whether the request is finished).
     func perform(_ action: String, _ tid: Int, _ text: String, _ say: String, _ snap: ScreenSnapshot?, _ step: inout AgentStep) async -> (String, Bool) {
-        if action == "click", tid == 0 { return ("ERROR: click needs an element number as target.", false) }
+        if action == "click", tid == 0 { return ("ERROR: click needs an element number as target. Nothing was clicked.", false) }
         // Grounding: a value that appears nowhere in what the model was shown is challenged once before it is written.
         if action == "type" || action == "replace_selection" {
             let unknown = ungrounded(text)
@@ -464,13 +476,13 @@ public final class Agent {
             try? await Task.sleep(nanoseconds: 900_000_000)
             return ("Waited", false)
         case "point":
-            guard let el = snap?.element(tid) else { return ("There is no element \(tid) on screen", false) }
+            guard let el = snap?.element(tid) else { return ("FAILED: there is no element \(tid) on screen.", false) }
             await stage?.glide(to: CGPoint(x: el.frame.midX, y: el.frame.midY), frame: el.frame, thought: el.label)
             answer = text.isEmpty ? "It's right here: \(el.label)." : text
             await stage?.speak(answer)
             return ("Pointed at \(el.label)", true)
         case "click":
-            guard let snap, let el = snap.element(tid) else { return ("There is no element \(tid) on screen", false) }
+            guard let snap, let el = snap.element(tid) else { return ("FAILED: there is no element \(tid) on screen. Nothing was clicked.", false) }
             let p = CGPoint(x: el.frame.midX, y: el.frame.midY)
             await stage?.glide(to: p, frame: el.frame, thought: say.isEmpty ? "Clicking \(el.label)" : say)
             await stage?.click(at: p)
@@ -479,7 +491,7 @@ public final class Agent {
             let changed = await settle(snap)
             return (!ok ? "FAILED: could not click \(el.label). Try a menu command for the same thing, or a different element." : changed ? "Clicked \(el.label); the screen changed" : "Clicked \(el.label), but nothing visibly changed. It may not have worked.", false)
         case "type":
-            guard let app = target else { return ("No app to type into", false) }
+            guard let app = target else { return ("FAILED: there is no app to type into.", false) }
             let isTerminal = Self.terminals.contains(app.localizedName ?? "")
             let before = Screen.visibleText(app)
             var point: CGPoint?
@@ -513,10 +525,10 @@ public final class Agent {
             _ = await settle(snap)
             return ("Verified: \"\(text.prefix(60))\" was typed. Look at the new screen: pick a suggestion if one appeared, or continue.", false)
         case "menu":
-            guard let snap else { return ("No app is open", false) }
+            guard let snap else { return ("FAILED: no app is open.", false) }
             guard let path = Screen.findMenu(snap, text) else {
-                let near = snap.menus.filter { m in text.lowercased().split(separator: " ").contains { m.lowercased().contains($0) } }.prefix(8)
-                return ("No menu command named \"\(text)\". Similar: \(near.joined(separator: "; "))", false)
+                let near = Screen.similarMenus(snap, text)
+                return ("FAILED: there is no menu command named \"\(text)\". Nothing was chosen. " + (near.isEmpty ? "This app has no menu command like it: use a different action." : "Menu commands that do exist: \(near.joined(separator: "; ")). Use one of these exactly, or a different action."), false)
             }
             step.detail = path
             // Fly to the real menu title in the menu bar.
@@ -531,7 +543,7 @@ public final class Agent {
             return (!ok ? "FAILED: could not choose \(path)" : changed ? "Chose \(path); the screen changed" : "Chose \(path), but nothing visibly changed yet", false)
         case "key":
             let name = Self.keys.keys.sorted { $0.count > $1.count }.first { text.lowercased().contains($0) } ?? ""
-            guard let app = target, let k = Self.keys[name] else { return ("Unknown key. Use one of: return, tab, escape, save, select all, copy, paste, undo, new", false) }
+            guard let app = target, let k = Self.keys[name] else { return ("FAILED: unknown key, nothing was pressed. Use one of: return, tab, escape, save, select all, copy, paste, undo, new, new tab", false) }
             stage?.thought(say.isEmpty ? "Pressing \(text)" : say)
             // Running a shell command is the kind of thing Onboard asks about first.
             if name == "return" || name == "enter", Self.terminals.contains(app.localizedName ?? ""),
@@ -543,7 +555,7 @@ public final class Agent {
                 let ok = await stage?.approve("Send this?", detail: "Pressing Return in \(app.localizedName ?? "this app") may send the message.") ?? false
                 guard ok else { return ("Not approved: \(owner) did not allow sending. Leave the draft as it is and answer.", false) }
             }
-            guard await Screen.bringForward(app) else { return ("Could not bring the app forward", false) }
+            guard await Screen.bringForward(app) else { return ("FAILED: could not bring the app forward, nothing was pressed.", false) }
             let beforeText = Screen.visibleText(app)
             Screen.key(k.0, command: k.1)
             _ = await settle(snap)

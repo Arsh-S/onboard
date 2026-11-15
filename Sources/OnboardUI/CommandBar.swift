@@ -189,12 +189,15 @@ struct CommandBarView: View {
     }
 
     private var compactHeader: some View {
-        HStack(spacing: 10) {
-            BrandMark(size: 18)
+        HStack(alignment: .top, spacing: 10) {
+            BrandMark(size: 18).padding(.top, 2)
+            // The whole request, wrapped, so a dictated command can be read back in full.
             Text(data.request)
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(Theme.primary)
-                .lineLimit(1)
+                .lineLimit(6).multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 2)
             Spacer(minLength: 8)
             if data.running {
                 HStack(spacing: 4) {
@@ -214,8 +217,8 @@ struct CommandBarView: View {
                 .buttonStyle(.plain)
             }
         }
-        .padding(.leading, 14).padding(.trailing, 12)
-        .frame(height: 46)
+        .padding(.leading, 14).padding(.trailing, 12).padding(.vertical, 12)
+        .frame(minHeight: 46)
     }
 
     // MARK: results

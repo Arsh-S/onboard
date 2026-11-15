@@ -238,6 +238,9 @@ public enum Screen {
         func leaf(_ m: String) -> String { (m.components(separatedBy: " > ").last ?? m).lowercased().replacingOccurrences(of: "…", with: "").replacingOccurrences(of: "...", with: "") }
         if let m = snap.menus.first(where: { $0.lowercased() == p }) { return m }
         if let m = snap.menus.first(where: { leaf($0) == p }) { return m }
+        // "History > New Tab" when the command really lives under File: trust the command name, not the invented path.
+        if p.contains(">") { let own = leaf(p.replacingOccurrences(of: ">", with: " > ")).trimmingCharacters(in: .whitespaces)
+            if !own.isEmpty, let m = snap.menus.first(where: { leaf($0) == own }) { return m } }
         // A loose match must be on the command's own name and nearly the same length: "Terminal" must never pick
         // "Make this the Default Terminal". Otherwise return nothing and let the model see the real choices.
         let words = p.split { !$0.isLetter && !$0.isNumber }.map(String.init).filter { $0.count > 1 }
@@ -247,6 +250,19 @@ public enum Screen {
             return words.allSatisfy { l.contains($0) } && lw <= words.count + 1 ? (m, l.count) : nil
         }
         return scored.min { $0.1 < $1.1 }?.0
+    }
+
+    /// Real menu commands that share the most words with a name that was not found.
+    public static func similarMenus(_ snap: ScreenSnapshot, _ phrase: String, max: Int = 8) -> [String] {
+        let words = Set(phrase.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init).filter { $0.count > 2 })
+        guard !words.isEmpty else { return [] }
+        let scored = snap.menus.compactMap { m -> (String, Int)? in
+            let parts = m.lowercased().components(separatedBy: " > ")
+            let own = parts.last ?? "", path = parts.dropLast().joined(separator: " ")
+            let n = words.reduce(0) { $0 + (own.contains($1) ? 2 : path.contains($1) ? 1 : 0) }     // the command's own name counts double
+            return n > 0 ? (m, n) : nil
+        }
+        return scored.sorted { $0.1 > $1.1 }.prefix(max).map(\.0)
     }
 
     /// Items of one top-level menu, for looking around ("File" -> New Window, Open…, Close…).
