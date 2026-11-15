@@ -105,7 +105,7 @@ public final class Agent {
         5. If LAST RESULT starts with FAILED or ERROR, your step did not happen: prev_result is failed. Read what it says and do something different. Never repeat a failed action.
         6. Never send, submit, pay or delete for \(owner). Leave drafts ready and say so. A typed terminal command has not run until return is pressed.
         7. Never invent facts: use search_memory or the screen. For a question about facts, search_memory, then done with the answer.
-        8. If any part of the request is unmet, uncertain or unverifiable, done must have success false and say what is left.
+        8. If any part of the request is unmet, uncertain or unverifiable, done must have success false and say what is left. If the request is missing something you need (what to remind about, who to message, what to write), do not fill it in: use done with success false and ask for it.
         9. Use the most direct action. To add text to a document, type into its text area: no clicking, selecting or cursor positioning first. For reminders and calendar events use add_reminder and add_event directly: never open those apps. To list or move files use list_files and move_files directly: never the terminal or Finder. To rewrite SELECTED TEXT use replace_selection.
         10. Only write values you have actually read. When a task needs a number, name or fact from the app in front, find it on screen first and copy it into memory BEFORE you open another app. Never guess a value.
 
@@ -116,6 +116,8 @@ public final class Agent {
         {"prev_result":"success","memory":"The line Pump A checked is in the document.","next_goal":"Report that it is done","action":"done","target":0,"target_label":"","text":"I added the line Pump A checked to your document.","success":true}
         TASK: remind me to call Sam tomorrow at 9.
         {"prev_result":"none","memory":"A reminder is needed.","next_goal":"Add the reminder","action":"add_reminder","target":0,"target_label":"","text":"Call Sam | tomorrow 9am","success":false}
+        TASK: add lunch with Maya to my calendar on Friday at noon. (never open a calendar app: add_event does it)
+        {"prev_result":"none","memory":"A calendar event is needed.","next_goal":"Add the event","action":"add_event","target":0,"target_label":"","text":"Lunch with Maya | Friday 12pm","success":false}
         TASK: what does the manual say about filter changes?
         {"prev_result":"none","memory":"Need the filter procedure from the notes.","next_goal":"Search the notes","action":"search_memory","target":0,"target_label":"","text":"filter change procedure","success":false}
         TASK: what does this document say? (the answer is already on screen)
@@ -149,6 +151,24 @@ public final class Agent {
         return re.matches(in: text, range: NSRange(location: 0, length: ns.length)).map { ns.substring(with: $0.range) }.filter { $0.count > 1 && !shown.contains($0) }
     }
     private var selectionHolder: AXUIElement?
+
+    /// Does the request itself name a time? If not, a due time from the model ("tomorrow 9am") is a guess and is dropped.
+    var requestNamesATime: Bool {
+        let l = request.lowercased()
+        if l.contains(where: \.isNumber) { return true }
+        let words = Set(l.split { !$0.isLetter }.map(String.init))
+        return !words.isDisjoint(with: ["today", "tonight", "tomorrow", "morning", "afternoon", "evening", "night", "noon", "midnight", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+                                        "week", "weekend", "month", "next", "later", "hour", "hours", "minute", "minutes", "am", "pm", "oclock", "soon", "now"])
+    }
+
+    /// Words of a reminder or event that appear nowhere in the request, on a screen, or in a result: the small model
+    /// fills a request that names nothing ("remind me") with the example from its instructions.
+    func inventedWords(_ text: String) -> (unknown: [String], total: Int) {
+        let filler: Set<String> = ["remind", "reminder", "the", "and", "for", "with", "about", "that", "this", "event", "add", "set", "new"]
+        let seen = shown.lowercased()
+        let words = text.lowercased().split { !$0.isLetter }.map(String.init).filter { $0.count > 2 && !filler.contains($0) }
+        return (words.filter { !seen.contains($0) }, words.count)
+    }
 
     struct Trail { var goal: String; var action: String; var result: String }
     public var usePlan = false
@@ -297,7 +317,9 @@ public final class Agent {
             Time: \(Date().formatted(date: .abbreviated, time: .shortened)). Step \(stepNo) of \(maxSteps).
             """
             previousKeys = Self.keys(of: snap)
-            shown += "\n" + user
+            // What counts as "seen": the screen and the clock. Not the step history, which repeats the model's own words
+            // (an invented value quoted back in an error would otherwise pass as seen on the next try).
+            shown += "\n" + (snap.map { "\($0.app) \($0.window)\n" + render($0, previous: []) } ?? "") + "\n" + Date().formatted(date: .complete, time: .shortened)
 
             guard let r = try? await bonsai.json(system: system, user: user, schemaJSON: schema, maxTokens: 260) else {
                 answer = "I can't reach Bonsai. Is LM Studio running?"; await stage?.speak(answer); return
@@ -380,6 +402,7 @@ public final class Agent {
                 } else { consecutiveFailures = 0 }
             } else if failed { consecutiveFailures += 1 } else { consecutiveFailures = 0 }
             lastResult = (failed ? "" : "OK ") + result.prefix(700)
+            if !failed, ["look", "search_memory", "list_files", "key", "list_apps", "show_menu"].contains(action) { shown += "\n" + result }   // real output: file names, notes, what a terminal printed
             if !failed, ["look", "search_memory", "list_files"].contains(action) { findings.append("\(action) \"\(txt.prefix(50))\": \(result.prefix(260))"); if findings.count > 4 { findings.removeFirst() } }
             step.result = String(result.prefix(300)); step.secs += now() - tA; step.done = true
             steps[steps.count - 1] = step
@@ -437,6 +460,10 @@ public final class Agent {
         let hard = facts.filter { !$0.hasPrefix("The text selected") }
         if !hard.isEmpty && ok { ok = false; reason = hard.joined(separator: " ") }
         if !ok && reason.isEmpty { reason = "There is no proof on screen that it is finished." }
+        // A "not done" verdict never goes out with a reply that sounds like success.
+        if !ok, !["not", "n't", "couldn", "unable", "fail", "but ", "however", "still", "left", "instead"].contains(where: { reply.lowercased().contains($0) }) {
+            reply = "I couldn't finish that. \(reason)"
+        }
         check.result = (ok ? "Confirmed" : "Not done") + ": " + (ok ? evidence : reason)
         check.secs = now() - t0; check.done = true
         if let i = steps.firstIndex(where: { $0.id == check.id }) { steps[i] = check }
@@ -468,6 +495,20 @@ public final class Agent {
             if !unknown.isEmpty, !challenged.contains(text) {
                 challenged.insert(text)
                 return ("ERROR: nothing was written. \(unknown.joined(separator: ", ")) is not in the task, on any screen you have seen, or in a memory result, so it looks invented. Use a value from FOUND SO FAR if it is there. Otherwise go and read the real value first (open the app that has it, or use look). Only if you calculated it yourself from values you read, repeat the same action.", false)
+            }
+        }
+        if action == "add_reminder" || action == "add_event" {
+            let what = action == "add_reminder" ? "reminder" : "event"
+            // Judged on the title alone: the time may be worked out ("noon" becomes 12pm), the subject may not.
+            let (unknown, total) = inventedWords(text.components(separatedBy: "|").first ?? text)
+            if total == 0 || unknown.count == total {
+                // Nothing in it came from the request: ask instead of guessing.
+                answer = "What should the \(what) say, and when?"
+                await stage?.speak(answer)
+                return ("Asked \(owner) what the \(what) should say", true)
+            }
+            if unknown.count * 2 > total {
+                return ("ERROR: no \(what) was added. \(owner) did not say \(unknown.isEmpty ? "what it is about" : "\"" + unknown.prefix(4).joined(separator: " ") + "\"")\(total == 0 ? "" : ": that was made up"). Use only \(owner)'s own words from the TASK. If the TASK does not say what the \(what) is about or when, do not add anything: use done with success false and ask \(owner) what the \(what) should say.", false)
             }
         }
         switch action {
@@ -658,7 +699,7 @@ public final class Agent {
         case "add_reminder":
             let p = text.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
             stage?.thought(say.isEmpty ? "Adding a reminder" : say)
-            let r = await Tools.addReminder(p.first ?? text, when: p.count > 1 ? p[1] : "")
+            let r = await Tools.addReminder(p.first ?? text, when: p.count > 1 && requestNamesATime ? p[1] : "")     // no due time unless one was asked for
             await summarizeAfter(r); return (r, true)
         case "add_event":
             let p = text.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
