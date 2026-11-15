@@ -56,6 +56,7 @@ if args.count > 2, args[1] == "snap" {
         let agent = Agent(bonsai: Bonsai(), memory: mem)
         agent.owner = "Arsh"
         let app = opt("--app").flatMap { Screen.runningApp($0) }
+        if let a = app, let phrase = opt("--select") { print("selected:", Screen.select(a, phrase: phrase)) }
         let t = CFAbsoluteTimeGetCurrent()
         await agent.run(args[2], app: app)
         for s in agent.steps { print(String(format: "  %@(%@)  %.2fs  say: %@\n     -> %@", s.action, s.detail, s.secs, s.say, String(s.result.prefix(140)).replacingOccurrences(of: "\n", with: " "))) }

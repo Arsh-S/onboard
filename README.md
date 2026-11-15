@@ -16,6 +16,10 @@ The same holds on Earth for anyone who cannot send their data to a cloud (lawyer
 
 - **Type or talk.** Press Option-Space and type, or hold fn and speak.
 - **Reads the screen as text.** It walks the macOS accessibility tree of the front window, which is exact and fast.
+- **Works across apps.** One request can read a value in one app and write it in another. What it reads is kept by the harness across the switch, and a number it never actually read is refused before it is typed.
+- **Looks at what text cannot describe.** Ask about a chart, an image or an error dialog and Bonsai 2 9B answers from a picture of the window.
+- **Rewrites your selection in place.** Select text in any app and say "make this formal": the selection is replaced and read back to confirm.
+- **Does file work directly.** "Put every PDF from Downloads into a folder called Receipts" lists and moves the files after you approve, with no clicking through Finder.
 - **Has eyes as a backup.** When an app exposes almost nothing, Onboard takes a picture of the window, reads the text in it with Apple's on-device recognizer, and clicks what it read. Before it says a task is done, Bonsai 2 9B looks at a picture of the window (its vision tower, loaded locally) and confirms the result is really there.
 - **Acts with its own cursor.** A teal cursor glides to the exact button, x-rays the window, clicks and types through the task, and leaves numbered step dots. Your own pointer stays where it was.
 - **Answers out loud**, in one or two short sentences.

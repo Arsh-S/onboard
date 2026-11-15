@@ -61,8 +61,8 @@ public final class Agent {
     // The harness (not the model) computes what changed on screen, counts failures, blocks repeats, and has a separate
     // judge confirm the result before anything is reported as done.
 
-    static let actions = ["click", "type", "key", "menu", "scroll", "open_app", "wait", "search_memory", "add_reminder", "add_event", "point", "done"]
-    static let changing: Set<String> = ["type", "click", "menu", "key", "open_app", "scroll"]
+    static let actions = ["click", "type", "key", "menu", "scroll", "open_app", "wait", "look", "replace_selection", "list_files", "move_files", "search_memory", "add_reminder", "add_event", "point", "done"]
+    static let changing: Set<String> = ["type", "click", "menu", "key", "open_app", "scroll", "replace_selection"]
 
     var system: String {
         """
@@ -88,6 +88,10 @@ public final class Agent {
         - scroll: text = down or up. Reveals more elements.
         - open_app: text = the app name.
         - wait: the screen is still loading.
+        - look: look at a picture of the window and answer a question about it. text = the question. For images, charts, error dialogs, colors and layout that the element list does not describe.
+        - replace_selection: replace the text \(owner) has selected (shown as SELECTED TEXT) with new text. text = the complete rewritten text, nothing else. For "rewrite this", "make this shorter", "fix the grammar", "translate this".
+        - list_files: list files in a folder. text = folder | kind, for example "Downloads | pdf".
+        - move_files: move files into a folder (it is created if needed). text = source folder | kind | destination folder, for example "Downloads | pdf | Receipts".
         - search_memory: look in \(owner)'s notes, manuals and files on this Mac. text = search words.
         - add_reminder: text = title | when.    - add_event: text = title | when.
         - point: show \(owner) where element target is. text = one sentence of guidance. Ends the task. For "where is" and "how do I" questions.
@@ -102,7 +106,8 @@ public final class Agent {
         6. Never send, submit, pay or delete for \(owner). Leave drafts ready and say so. A typed terminal command has not run until return is pressed.
         7. Never invent facts: use search_memory or the screen. For a question about facts, search_memory, then done with the answer.
         8. If any part of the request is unmet, uncertain or unverifiable, done must have success false and say what is left.
-        9. Use the most direct action. To add text to a document, type into its text area: no clicking, selecting or cursor positioning first. For reminders and calendar events use add_reminder and add_event directly: never open those apps.
+        9. Use the most direct action. To add text to a document, type into its text area: no clicking, selecting or cursor positioning first. For reminders and calendar events use add_reminder and add_event directly: never open those apps. To list or move files use list_files and move_files directly: never the terminal or Finder. To rewrite SELECTED TEXT use replace_selection.
+        10. Only write values you have actually read. When a task needs a number, name or fact from the app in front, find it on screen first and copy it into memory BEFORE you open another app. Never guess a value.
 
         Examples (one step each):
         TASK: add a line that says Pump A checked. ELEMENTS: [3] field "(unnamed field)" = "Log..."
@@ -119,9 +124,31 @@ public final class Agent {
         {"prev_result":"none","memory":"The user wants to know how, not for me to do it.","next_goal":"Explain where Bold is","action":"done","target":0,"target_label":"","text":"Select the text, then open the Format menu, choose Font, and pick Bold.","success":true}
         TASK: text Maya that I'm late. ELEMENTS after typing Maya in the To field: *[12] row "Maya Chen" ...
         {"prev_result":"success","memory":"Messages is open, new message started, typed Maya; a suggestion appeared.","next_goal":"Pick Maya Chen from the suggestions","action":"click","target":12,"target_label":"Maya Chen","text":"","success":false}
+        TASK: make this sound more professional. SELECTED TEXT: "hey can u send me the numbers asap"
+        {"prev_result":"none","memory":"Rewrite the selected text in place.","next_goal":"Replace the selection with a professional version","action":"replace_selection","target":0,"target_label":"","text":"Hello, could you please send me the numbers as soon as possible?","success":false}
+        TASK: what is wrong in this chart? (the element list does not describe the chart)
+        {"prev_result":"none","memory":"Need to see the chart itself.","next_goal":"Look at the window","action":"look","target":0,"target_label":"","text":"What does the chart show and what looks wrong in it?","success":false}
+        TASK: put the screenshots on my desktop into a folder called Shots.
+        {"prev_result":"none","memory":"Move screenshots from Desktop into Shots.","next_goal":"Move the files","action":"move_files","target":0,"target_label":"","text":"Desktop | screenshot | Shots","success":false}
         JSON only.
         """
     }
+
+    private var selected = ""
+    private var startSelection = ""
+    /// Everything the model has been shown in this run (screens, results, the request). Values it writes must come from here.
+    private var shown = ""
+    private var challenged: Set<String> = []
+    /// What the model has read so far (from looks, memory and file listings), kept by the harness so it survives app switches.
+    private var findings: [String] = []
+
+    /// Numbers in text the model wants to write that it was never shown: the mark of an invented value.
+    func ungrounded(_ text: String) -> [String] {
+        guard let re = try? NSRegularExpression(pattern: #"\d+(?:[.,:]\d+)*"#) else { return [] }
+        let ns = text as NSString
+        return re.matches(in: text, range: NSRange(location: 0, length: ns.length)).map { ns.substring(with: $0.range) }.filter { $0.count > 1 && !shown.contains($0) }
+    }
+    private var selectionHolder: AXUIElement?
 
     struct Trail { var goal: String; var action: String; var result: String }
     public var usePlan = false
@@ -145,14 +172,17 @@ public final class Agent {
     /// The screen as the model gets it: the accessibility tree, plus text read from a picture of the window when the tree is nearly empty.
     func look(_ app: NSRunningApplication?, menusFrom old: ScreenSnapshot? = nil) async -> ScreenSnapshot? {
         guard let app, let snap = Screen.snapshot(app, menusFrom: old) else { return nil }
-        guard useEyes, snap.elements.count < 10, let img = await Eyes.capture(pid: snap.pid, windowFrame: snap.windowFrame) else { return snap }
+        // Nearly empty, or controls with nothing to read (a spreadsheet grid, a canvas): read the words from a picture.
+        let readable = snap.elements.reduce(0) { $0 + ($1.role == "text" ? $1.label.count : $1.value.count) }
+        guard useEyes, snap.elements.count < 10 || readable < 80, let img = await Eyes.capture(pid: snap.pid, windowFrame: snap.windowFrame) else { return snap }
         return snap.adding(seen: Eyes.readText(img, windowFrame: snap.windowFrame))
     }
 
     /// Elements as the model sees them, with * on the ones that were not there at the last step.
     func render(_ snap: ScreenSnapshot, previous: Set<String>) -> String {
         var out = ""
-        for e in snap.elements.filter({ $0.id > 0 }).prefix(70) {
+        let named = snap.elements.filter { $0.id > 0 && $0.role != "seen" }.prefix(snap.seen ? 40 : 70)
+        for e in named + snap.elements.filter({ $0.role == "seen" }).prefix(60) {
             let isNew = !previous.isEmpty && !previous.contains(e.role + "|" + e.label)
             out += "\(isNew ? "*" : "")[\(e.id)] \(e.role) \"\(e.label.prefix(60))\"" + (e.value.isEmpty ? "" : " = \"\(e.value.prefix(70))\"") + "\n"
         }
@@ -206,6 +236,9 @@ public final class Agent {
         let t0 = now()
         defer { running = false; turnSecs = now() - t0; stage?.rest(); writeRunLog() }
         target = app ?? Screen.targetApp(excluding: ownBundle)
+        let sel = target.flatMap { Screen.selection($0) }
+        selected = sel?.text ?? ""; selectionHolder = sel?.holder; startSelection = selected
+        shown = req + "\n" + selected; challenged = []; findings = []
 
         var snap: ScreenSnapshot? = await look(target)
         lastSnapshot = snap
@@ -227,7 +260,7 @@ public final class Agent {
 
             let ids = [0] + (snap?.elements.filter { $0.id > 0 }.map(\.id) ?? [])
             let lastStep = stepNo == maxSteps || consecutiveFailures >= 5
-            let allowed = lastStep ? ["done"] : Self.actions
+            let allowed = lastStep ? ["done"] : Self.actions.filter { $0 != "replace_selection" || !selected.isEmpty }
             let schema = "{\"type\":\"object\",\"properties\":{"
                 + "\"prev_result\":{\"type\":\"string\",\"enum\":[\"none\",\"success\",\"failed\",\"unknown\"]},"
                 + "\"memory\":{\"type\":\"string\",\"maxLength\":170},\"next_goal\":{\"type\":\"string\",\"maxLength\":110},"
@@ -244,8 +277,8 @@ public final class Agent {
             if lastStep { notes.append("This is the last step. Use done and report honestly what was and was not achieved.") }
             let hints = snap.map { Screen.menuHints($0, for: req) } ?? []
             let user = """
-            TASK: \(req)\(plan.isEmpty ? "" : "\nPLAN:\n" + planText())
-            MEMORY: \(memoryNote.isEmpty ? "(empty)" : memoryNote)
+            TASK: \(req)\(plan.isEmpty ? "" : "\nPLAN:\n" + planText())\(selected.isEmpty ? "" : "\nSELECTED TEXT: \"" + selected.prefix(900) + "\"")
+            MEMORY: \(memoryNote.isEmpty ? "(empty)" : memoryNote)\(findings.isEmpty ? "" : "\nFOUND SO FAR (real values you have read, use these):\n" + findings.map { "- " + $0 }.joined(separator: "\n"))
             LAST STEPS:
             \(history())
             LAST RESULT: \(lastResult)
@@ -258,6 +291,7 @@ public final class Agent {
             Time: \(Date().formatted(date: .abbreviated, time: .shortened)). Step \(stepNo) of \(maxSteps).
             """
             previousKeys = Self.keys(of: snap)
+            shown += "\n" + user
 
             guard let r = try? await bonsai.json(system: system, user: user, schemaJSON: schema, maxTokens: 260) else {
                 answer = "I can't reach Bonsai. Is LM Studio running?"; await stage?.speak(answer); return
@@ -333,6 +367,7 @@ public final class Agent {
                 } else { consecutiveFailures = 0 }
             } else if failed { consecutiveFailures += 1 } else { consecutiveFailures = 0 }
             lastResult = (failed ? "" : "OK ") + result.prefix(700)
+            if !failed, ["look", "search_memory", "list_files"].contains(action) { findings.append("\(action) \"\(txt.prefix(50))\": \(result.prefix(260))"); if findings.count > 4 { findings.removeFirst() } }
             step.result = String(result.prefix(300)); step.secs += now() - tA; step.done = true
             steps[steps.count - 1] = step
             trail.append(Trail(goal: goal, action: signature, result: String(result.prefix(200)))); if trail.count > 3 { trail.removeFirst() }
@@ -355,7 +390,9 @@ public final class Agent {
         var screen = "(no window)"
         var picture: Data?
         if let app = Screen.allowForeground ? (Screen.targetApp(excluding: ownBundle) ?? target) : target, let snap = await look(app, menusFrom: lastSnapshot) {
-            if useEyes, let img = await Eyes.capture(pid: snap.pid, windowFrame: snap.windowFrame) { picture = Eyes.jpeg(img) }
+            // A picture is the check for steps nothing else confirmed. Steps the harness already verified by reading the text back need no second look.
+            let unproven = acted.contains { !$0.result.hasPrefix("Verified") }
+            if useEyes, unproven, let img = await Eyes.capture(pid: snap.pid, windowFrame: snap.windowFrame) { picture = Eyes.jpeg(img) }
             await stage?.scan(window: snap.windowFrame, elements: snap.elements.filter { $0.role != "text" })
             screen = "App: \(snap.app). Window: \"\(snap.window)\"\n" + String(render(snap, previous: []).prefix(1500)) + "\nLatest text in the window:\n" + String(Screen.visibleText(app).suffix(600))
         }
@@ -365,6 +402,8 @@ public final class Agent {
         if typedCommand && !ran { facts.append("A command was typed but never run (return was not pressed).") }
         let failures = acted.filter { $0.result.hasPrefix("FAILED") || $0.result.hasPrefix("ERROR") }
         if !failures.isEmpty { facts.append("\(failures.count) step(s) failed: " + failures.suffix(2).map { String($0.result.prefix(110)) }.joined(separator: " | ")) }
+        let proven = acted.filter { $0.result.hasPrefix("Verified") }.map { "Confirmed by reading the app's text back: " + String($0.result.dropFirst(10).prefix(150)) }
+        if !startSelection.isEmpty { facts.append("The text selected at the start was: \"\(startSelection.prefix(300))\"") }
         let log = steps.filter { $0.action != "verify" }.enumerated().map { "\($0.offset + 1). \($0.element.action)(\($0.element.detail.prefix(60))) -> \($0.element.result.prefix(160))" }.joined(separator: "\n")
         let schema = "{\"type\":\"object\",\"properties\":{\"evidence\":{\"type\":\"string\",\"maxLength\":140},\"verdict\":{\"type\":\"boolean\"},\"failure_reason\":{\"type\":\"string\",\"maxLength\":160},\"reply\":{\"type\":\"string\",\"maxLength\":260}},\"required\":[\"evidence\",\"verdict\",\"failure_reason\",\"reply\"],\"additionalProperties\":false}"
         let sys = """
@@ -373,7 +412,7 @@ public final class Agent {
         A typed command that was never run is not done. Text in the wrong place is not done. A draft that is ready but not sent counts as done when the task was to draft.
         \(picture == nil ? "" : "A picture of the window as it looks right now is attached. Look at it: what is visible in the picture outweighs what the log claims.\n        ")evidence: what on the final screen proves your verdict. failure_reason: what is missing ("" if done). reply: one or two short spoken sentences telling \(owner) honestly what happened and what is left. JSON only.
         """
-        let user = "TASK: \(req)\n\nACTION LOG:\n\(log)\n\nKNOWN FACTS:\n\(facts.isEmpty ? "(none)" : facts.joined(separator: "\n"))\n\nSCREEN AT THE START:\n\(firstScreen.prefix(700))\n\nSCREEN NOW:\n\(screen)\n\nThe assistant says (claims \(claimed ? "success" : "failure")): \"\(proposed)\"\n\nJSON: evidence, verdict, failure_reason, reply."
+        let user = "TASK: \(req)\n\nACTION LOG:\n\(log)\n\nKNOWN FACTS (these are true):\n\((facts + proven).isEmpty ? "(none)" : (facts + proven).joined(separator: "\n"))\n\nSCREEN AT THE START:\n\(firstScreen.prefix(700))\n\nSCREEN NOW:\n\(screen)\n\nThe assistant says (claims \(claimed ? "success" : "failure")): \"\(proposed)\"\n\nJSON: evidence, verdict, failure_reason, reply."
         var ok = claimed, reply = proposed, reason = "", evidence = ""
         check.detail = picture == nil ? "Re-reading the screen" : "Looking at the screen"
         if let r = try? await bonsai.json(system: sys, user: user, schemaJSON: schema, maxTokens: 200, image: picture) {
@@ -382,7 +421,8 @@ public final class Agent {
             reason = r.json["failure_reason"] as? String ?? ""
             if let rp = r.json["reply"] as? String, !rp.isEmpty { reply = rp }
         }
-        if !facts.isEmpty && ok { ok = false; reason = facts.joined(separator: " ") }
+        let hard = facts.filter { !$0.hasPrefix("The text selected") }
+        if !hard.isEmpty && ok { ok = false; reason = hard.joined(separator: " ") }
         if !ok && reason.isEmpty { reason = "There is no proof on screen that it is finished." }
         check.result = (ok ? "Confirmed" : "Not done") + ": " + (ok ? evidence : reason)
         check.secs = now() - t0; check.done = true
@@ -409,6 +449,14 @@ public final class Agent {
     /// Returns (result text for the model, whether the request is finished).
     func perform(_ action: String, _ tid: Int, _ text: String, _ say: String, _ snap: ScreenSnapshot?, _ step: inout AgentStep) async -> (String, Bool) {
         if action == "click", tid == 0 { return ("ERROR: click needs an element number as target.", false) }
+        // Grounding: a value that appears nowhere in what the model was shown is challenged once before it is written.
+        if action == "type" || action == "replace_selection" {
+            let unknown = ungrounded(text)
+            if !unknown.isEmpty, !challenged.contains(text) {
+                challenged.insert(text)
+                return ("ERROR: nothing was written. \(unknown.joined(separator: ", ")) is not in the task, on any screen you have seen, or in a memory result, so it looks invented. Use a value from FOUND SO FAR if it is there. Otherwise go and read the real value first (open the app that has it, or use look). Only if you calculated it yourself from values you read, repeat the same action.", false)
+            }
+        }
         switch action {
         case "wait":
             stage?.thought(say.isEmpty ? "Waiting for the screen" : say)
@@ -509,10 +557,11 @@ public final class Agent {
             return ("Pressed \(name)", false)
         case "open_app":
             stage?.thought(say.isEmpty ? "Opening \(text)" : say)
-            // Headless checks never launch anything: they only report what would open.
+            // Headless checks never show anything: the app starts hidden and becomes the one we work in.
             if !Screen.allowForeground {
-                guard let r = Screen.resolveApp(text) else { return ("FAILED: there is no app named \(text).", false) }
-                return ("(dry run) \(r.name) would open", false)
+                guard let a = await Screen.openHidden(text) else { return ("FAILED: there is no app named \(text).", false) }
+                target = a
+                return ("\(a.localizedName ?? text) is open and in front", false)
             }
             guard let a = await Screen.open(text) else {
                 let near = Screen.similarApps(text)
@@ -540,6 +589,52 @@ public final class Agent {
                 }
             }
             return ("Found in \(owner)'s files:\n" + hits.map { "[\($0.chunk.title)] \($0.chunk.text.prefix(420))" }.joined(separator: "\n") + "\nUse these facts. If the request was a question, answer it now.", false)
+        case "look":
+            stage?.thought(say.isEmpty ? "Looking at the screen" : say)
+            guard let snap, let img = await Eyes.capture(pid: snap.pid, windowFrame: snap.windowFrame), let pic = Eyes.jpeg(img) else {
+                return ("FAILED: I cannot take a picture of the window (Screen Recording permission is off). Answer from the element list only.", false)
+            }
+            await stage?.scan(window: snap.windowFrame, elements: [])
+            let schema = "{\"type\":\"object\",\"properties\":{\"answer\":{\"type\":\"string\"}},\"required\":[\"answer\"],\"additionalProperties\":false}"
+            let q = text.isEmpty ? request : text
+            guard let r = try? await bonsai.json(system: "You are Onboard, looking at a picture of the \(snap.app) window on \(owner)'s Mac. Answer from what is visible in the picture only. Be specific: quote numbers, labels and messages you can read. If asked what is wrong, name the value or message that stands out and say what it means. Two or three short spoken sentences, no lists. JSON only.",
+                                                 user: "\(owner) asked: \(request)\nQuestion about the picture: \(q)\n\nJSON: answer.", schemaJSON: schema, maxTokens: 170, image: pic),
+                  let a = r.json["answer"] as? String, !a.isEmpty else { return ("FAILED: Bonsai could not read the picture.", false) }
+            if Self.isQuestion(request) { answer = a; await stage?.speak(a); return ("Saw: \(a)", true) }
+            return ("The picture shows: \(a)", false)
+        case "replace_selection":
+            guard !selected.isEmpty, let holder = selectionHolder else { return ("FAILED: no text is selected. Ask \(owner) to select the text first, or type into a field instead.", false) }
+            guard !text.isEmpty else { return ("ERROR: replace_selection needs the new text.", false) }
+            stage?.thought(say.isEmpty ? "Rewriting the selection" : say)
+            if Screen.replaceSelection(holder, with: text) { selected = ""; return ("Verified: the selected text now reads \"\(text.prefix(80))\". The rewrite is done.", false) }
+            // Apps that refuse a direct edit still take real typing over the selection.
+            if Screen.allowForeground, let app = target, await Screen.bringForward(app) {
+                let before = Screen.visibleText(app)
+                Screen.type(text); try? await Task.sleep(nanoseconds: 350_000_000)
+                if Self.appeared(text, before: before, after: Screen.visibleText(app)) { selected = ""; return ("Verified: the selected text now reads \"\(text.prefix(80))\". The rewrite is done.", false) }
+            }
+            return ("FAILED: this app did not accept the new text.", false)
+        case "list_files":
+            let p = text.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
+            let dir = Files.folder(p.first ?? "")
+            stage?.thought(say.isEmpty ? "Looking in \(dir.lastPathComponent)" : say)
+            let found = Files.list(dir, filter: p.count > 1 ? p[1] : "")
+            guard FileManager.default.fileExists(atPath: dir.path) else { return ("FAILED: there is no folder \(Files.short(dir)).", false) }
+            return ("\(found.count) file(s) in \(Files.short(dir)): " + found.prefix(25).map(\.lastPathComponent).joined(separator: ", ") + (found.count > 25 ? " and more" : ""), false)
+        case "move_files":
+            let p = text.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
+            guard p.count >= 3 else { return ("ERROR: move_files needs text = source folder | kind | destination folder.", false) }
+            let src = Files.folder(p[0]), dest = Files.folder(p[2], inside: src)
+            let found = Files.list(src, filter: p[1])
+            guard !found.isEmpty else { return ("FAILED: no \(p[1]) files in \(Files.short(src)). Nothing was moved.", false) }
+            stage?.thought(say.isEmpty ? "Moving \(found.count) files" : say)
+            let names = found.prefix(6).map(\.lastPathComponent).joined(separator: "\n") + (found.count > 6 ? "\nand \(found.count - 6) more" : "")
+            if Tools.dryRun { return ("(dry run) \(found.count) file(s) would move from \(Files.short(src)) to \(Files.short(dest)): \(found.prefix(8).map(\.lastPathComponent).joined(separator: ", "))", false) }
+            guard await stage?.approve("Move \(found.count) file\(found.count == 1 ? "" : "s") to \(Files.short(dest))?", detail: names) ?? true else { return ("\(owner) said no. Nothing was moved.", false) }
+            let (moved, skipped) = Files.move(found, to: dest)
+            let there = Files.list(dest, filter: "").count
+            if Screen.allowForeground { NSWorkspace.shared.activateFileViewerSelecting([dest]) }
+            return ("Verified: moved \(moved) file(s) to \(Files.short(dest)), which now holds \(there)." + (skipped.isEmpty ? "" : " Left in place (name already taken): \(skipped.prefix(4).joined(separator: ", ")).") + " The file work is done.", false)
         case "add_reminder":
             let p = text.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
             stage?.thought(say.isEmpty ? "Adding a reminder" : say)

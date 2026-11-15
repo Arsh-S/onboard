@@ -47,7 +47,7 @@ public enum Eyes {
         for o in req.results ?? [] {
             guard let c = o.topCandidates(1).first, c.confidence > 0.4 else { continue }
             let t = c.string.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard t.count > 1 else { continue }
+            guard t.count > 1 || t.first?.isNumber == true else { continue }
             let b = o.boundingBox   // normalized, origin bottom-left
             out.append(Line(text: t, frame: CGRect(x: windowFrame.minX + b.minX * windowFrame.width, y: windowFrame.minY + (1 - b.maxY) * windowFrame.height,
                                                    width: b.width * windowFrame.width, height: b.height * windowFrame.height)))
@@ -75,6 +75,15 @@ public extension ScreenSnapshot {
         var els = elements; var id = (elements.map(\.id).max() ?? 0) + 1
         for l in lines where !known.contains(l.text.lowercased()) {
             els.append(UIElement(id: id, role: "seen", label: l.text, value: "", frame: l.frame)); id += 1
+        }
+        // Pieces on the same line belong together (a table row): give them to the model as one readable line too.
+        var rows: [[Eyes.Line]] = []
+        for l in lines {
+            if let last = rows.last?.last, abs(last.frame.midY - l.frame.midY) < 7 { rows[rows.count - 1].append(l) } else { rows.append([l]) }
+        }
+        for r in rows where r.count > 1 {
+            let u = r.dropFirst().reduce(r[0].frame) { $0.union($1.frame) }
+            els.append(UIElement(id: 0, role: "text", label: r.sorted { $0.frame.minX < $1.frame.minX }.map(\.text).joined(separator: " | "), value: "", frame: u))
         }
         let s = ScreenSnapshot(app: app, pid: pid, window: window, windowFrame: windowFrame, elements: els, menus: menus, refs: refs, menuRefs: menuRefs, secs: secs)
         s.menuTitleFrames = menuTitleFrames; s.seen = true

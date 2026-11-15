@@ -288,6 +288,48 @@ public enum Screen {
         return attr(f as! AXUIElement, kAXRoleAttribute) as? String ?? ""
     }
 
+    /// The text the user has selected in an app, with the control that holds it.
+    public static func selection(_ app: NSRunningApplication) -> (text: String, holder: AXUIElement)? {
+        let root = AXUIElementCreateApplication(app.processIdentifier)
+        guard let f = attr(root, kAXFocusedUIElementAttribute) else { return nil }
+        let e = f as! AXUIElement
+        let t = (attr(e, kAXSelectedTextAttribute) as? String) ?? ""
+        return t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : (t, e)
+    }
+
+    /// Select a phrase inside an app's text field (used by headless checks to stand in for the user's selection).
+    @discardableResult public static func select(_ app: NSRunningApplication, phrase: String) -> Bool {
+        guard let snap = snapshot(app) else { return false }
+        for (id, e) in snap.refs where snap.element(id)?.role == "field" {
+            let v = (attr(e, kAXValueAttribute) as? String) ?? ""
+            let r = (v as NSString).range(of: phrase)
+            guard r.location != NSNotFound else { continue }
+            var cr = CFRange(location: r.location, length: r.length)
+            guard let rv = AXValueCreate(.cfRange, &cr) else { continue }
+            AXUIElementSetAttributeValue(e, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+            return AXUIElementSetAttributeValue(e, kAXSelectedTextRangeAttribute as CFString, rv) == .success
+        }
+        return false
+    }
+
+    /// Replace the selected text in place. True only if the control's text really changed to contain the new words.
+    public static func replaceSelection(_ holder: AXUIElement, with text: String) -> Bool {
+        guard AXUIElementSetAttributeValue(holder, kAXSelectedTextAttribute as CFString, text as CFString) == .success else { return false }
+        usleep(120_000)
+        let now = (attr(holder, kAXValueAttribute) as? String) ?? ""
+        return now.contains(text.prefix(40))
+    }
+
+    /// Start an app without showing it (headless checks), or return it if it is already running.
+    public static func openHidden(_ name: String) async -> NSRunningApplication? {
+        guard let app = resolveApp(name) else { return nil }
+        if let a = runningApp(app.name) { return a }
+        let cfg = NSWorkspace.OpenConfiguration(); cfg.activates = false; cfg.hides = true; cfg.addsToRecentItems = false
+        _ = try? await NSWorkspace.shared.openApplication(at: URL(fileURLWithPath: app.path), configuration: cfg)
+        for _ in 0..<30 { if let a = runningApp(app.name), Screen.snapshot(a) != nil { return a }; try? await Task.sleep(nanoseconds: 150_000_000) }
+        return runningApp(app.name)
+    }
+
     @discardableResult public static func pressMenu(_ snap: ScreenSnapshot, path: String) -> Bool {
         guard let e = snap.menuRefs[path] else { return false }
         return AXUIElementPerformAction(e, kAXPressAction as CFString) == .success
