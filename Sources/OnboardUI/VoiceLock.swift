@@ -25,6 +25,7 @@ private let voiceLog = Logger(subsystem: "net.arshsingh.onboard", category: "voi
     /// Wired by AppModel.
     @ObservationIgnored var ownerName: () -> String = { "Owner" }
     @ObservationIgnored var transcriber: () -> Transcriber? = { nil }
+    @ObservationIgnored var accurate: () -> Transcriber? = { nil }     // the large model, for the request itself
     @ObservationIgnored var canListen: () -> Bool = { true }          // false while Onboard speaks or push-to-talk records
     @ObservationIgnored var onCommand: ((String) -> Void)?
     @ObservationIgnored var onRejected: (() -> Void)?
@@ -234,6 +235,10 @@ private let voiceLog = Logger(subsystem: "net.arshsingh.onboard", category: "voi
             return                                                      // not addressed to Onboard: ignored, not kept
         }
         armedUntil = .distantPast
+        // The small model only had to spot the wake word. The request itself is read again by the accurate one.
+        if let a = accurate(), let better = try? await a.transcribe(u.audio), !Self.isNoise(better) {
+            if let rest = Self.command(in: better) { if rest.count >= 3 { request = rest } } else if armed { request = better }
+        }
         let owner = armed ? true : await isOwner(u.audio)               // an armed request was already checked on the wake word
         voiceLog.notice("request heard, owner=\(owner): \(request, privacy: .public)")
         guard owner else { onRejected?(); return }

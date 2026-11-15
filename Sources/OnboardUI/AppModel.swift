@@ -30,6 +30,10 @@ final class AppModel {
     let agent: Agent
     let memoryFolder: URL
     @ObservationIgnored private(set) var transcriber: Transcriber?
+    /// The large Whisper model, for what is said on purpose (push to talk, dictation, a request after the wake word).
+    /// The small one stays for the always-on wake word check, where speed matters and the words do not.
+    @ObservationIgnored private(set) var accurate: Transcriber?
+    static let accurateModel = "large-v3-v20240930_626MB"
     @ObservationIgnored private(set) var speech: SpeechOut?
     @ObservationIgnored private let recorder = Recorder()
     @ObservationIgnored private let audioQ = DispatchQueue(label: "net.arshsingh.onboard.audio")
@@ -141,6 +145,11 @@ final class AppModel {
                 let t = try await Transcriber(downloadBase: base)
                 try? await t.warm()
                 await self?.hearingLoaded(t)
+                // The accurate model takes longer to load (much longer the first time); until then the small one does everything.
+                if let big = try? await Transcriber(model: AppModel.accurateModel, downloadBase: base) {
+                    try? await big.warm()
+                    await self?.accurateLoaded(big)
+                }
             } catch { await self?.setHearing(.failed("Could not load")) }
         }
         Task.detached(priority: .userInitiated) { [weak self] in
@@ -157,7 +166,8 @@ final class AppModel {
     private func speechLoaded(_ s: SpeechOut) { speech = s; speaking = .ready }
     private func setHearing(_ s: LoadState) { hearing = s }
     private func setSpeaking(_ s: LoadState) { speaking = s }
-    private func applyNames() { if !owner.isEmpty { transcriber?.setNames([owner, "Onboard"]) } }
+    private func accurateLoaded(_ t: Transcriber) { accurate = t; applyNames(); captureLog.notice("accurate speech model loaded: \(AppModel.accurateModel, privacy: .public)") }
+    private func applyNames() { if !owner.isEmpty { transcriber?.setNames([owner, "Onboard"]); accurate?.setNames([owner, "Onboard"]) } }
 
     func checkBonsai(measure: Bool) async {
         guard let models = try? await bonsai.models() else { thinking = .failed("LM Studio is not running"); return }
@@ -293,8 +303,9 @@ final class AppModel {
         guard recording == mode else { return }
         recording = nil
         setPill(.thinking)
-        let rec = recorder, t = transcriber
+        let rec = recorder, t = accurate ?? transcriber
         audioQ.async { [weak self] in
+            Thread.sleep(forTimeInterval: 0.25)      // the key usually comes up while the last word is still being said
             let samples = rec.stop()
             Task {
                 var text = ""
@@ -370,6 +381,7 @@ final class AppModel {
         voiceWired = true
         voice.ownerName = { [weak self] in self?.owner ?? "Owner" }
         voice.transcriber = { [weak self] in self?.transcriber }
+        voice.accurate = { [weak self] in self?.accurate }
         voice.canListen = { [weak self] in
             guard let self else { return false }
             return self.recording == nil && !self.speakingNow && self.pill != .speaking && !self.agent.running

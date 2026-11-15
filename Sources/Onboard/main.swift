@@ -45,7 +45,7 @@ if args.count > 2, args[1] == "snap" {
             let base = URL(fileURLWithPath: NSHomeDirectory() + "/Library/Application Support/Tableside/huggingface")
             let audio = try loadAudio16k(URL(fileURLWithPath: args[2]))
             var t0 = Date()
-            let tr = try await Transcriber(downloadBase: base); print(String(format: "whisper loaded %.1fs", Date().timeIntervalSince(t0))); t0 = Date()
+            let tr = try await Transcriber(model: opt("--model") ?? "base.en", downloadBase: base); try? await tr.warm(); print(String(format: "whisper loaded %.1fs", Date().timeIntervalSince(t0))); t0 = Date()
             let sk = try await SpeakerKitLoader.load(downloadBase: base); print(String(format: "speakerkit loaded %.1fs", Date().timeIntervalSince(t0)))
             let spk = SpeakerIdentifier(sk: sk, storeURL: URL(fileURLWithPath: NSTemporaryDirectory() + "voicetest_\(getpid()).json"))
             let vad = EnergyVAD(threshold: Float(opt("--threshold") ?? "") ?? 0.006); vad.minUtterance = 0.3

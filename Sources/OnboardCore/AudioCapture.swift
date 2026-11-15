@@ -87,7 +87,9 @@ public final class AudioCapture: @unchecked Sendable {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         running = false
-        lock.lock(); acc.removeAll(); lock.unlock()
+        // Hand over what is left (up to half a second): dropping it cut the last word off every recording.
+        lock.lock(); let rest = acc; acc.removeAll(); lock.unlock()
+        if !rest.isEmpty { onChunk?(rest) }
     }
 }
 
