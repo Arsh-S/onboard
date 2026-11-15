@@ -96,6 +96,7 @@ public enum Screen {
         let t0 = CFAbsoluteTimeGetCurrent()
         let root = AXUIElementCreateApplication(app.processIdentifier)
         AXUIElementSetMessagingTimeout(root, 1.5)
+        AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), 1.0)      // every element, not just the app object
         if app.bundleIdentifier == "com.google.Chrome" { AXUIElementSetAttributeValue(root, "AXManualAccessibility" as CFString, kCFBooleanTrue) }
         let win: AXUIElement? = (attr(root, kAXFocusedWindowAttribute) as! AXUIElement?) ?? (attr(root, kAXMainWindowAttribute) as! AXUIElement?) ?? (attr(root, kAXWindowsAttribute) as? [AXUIElement])?.first
         guard let win else { return nil }
@@ -117,7 +118,9 @@ public enum Screen {
             }
             return parts.joined(separator: ", ")
         }
-        while !queue.isEmpty && n < limit && els.count < 260 {
+        // An app that is busy (a popover loading a long list) answers each question slowly or not at all. Reading the
+        // screen never takes more than a few seconds: past that, work with what has been read so far.
+        while !queue.isEmpty && n < limit && els.count < 260 && CFAbsoluteTimeGetCurrent() - t0 < 3 {
             let e = queue.removeFirst(); n += 1
             let role = attr(e, kAXRoleAttribute) as? String ?? ""
             if let kind = roleNames[role] {
@@ -178,7 +181,9 @@ public enum Screen {
             guard let el = snap.element(id), el.role == "seen" else { return false }
             click(at: CGPoint(x: el.frame.midX, y: el.frame.midY)); return true
         }
-        if AXUIElementPerformAction(e, kAXPressAction as CFString) == .success { return true }
+        let r = AXUIElementPerformAction(e, kAXPressAction as CFString)
+        // A press that opens a menu or popover does not answer until it closes: no answer in time still means it was pressed.
+        if r == .success || r == .cannotComplete { return true }
         // Some controls only respond to a real click.
         if let el = snap.element(id) { click(at: CGPoint(x: el.frame.midX, y: el.frame.midY)); return true }
         return false

@@ -495,7 +495,9 @@ public final class Agent {
             let isTerminal = Self.terminals.contains(app.localizedName ?? "")
             let before = Screen.visibleText(app)
             var point: CGPoint?
+            var fieldLabel: String?
             if let snap, let fid = (snap.element(tid)?.role == "field" ? tid : Screen.defaultField(snap)), let el = snap.element(fid) {
+                fieldLabel = el.label
                 point = CGPoint(x: el.frame.midX, y: el.frame.midY)
                 step.frame = el.frame; step.point = point
                 await stage?.glide(to: point!, frame: el.frame, thought: say.isEmpty ? "Typing" : say)
@@ -523,6 +525,11 @@ public final class Agent {
             }
             if isTerminal { return ("Verified: the command is typed at the prompt but NOT run yet. Use key return to run it.", false) }
             _ = await settle(snap)
+            // Say what the field holds now, not just what was typed: text that was already there is easy to miss.
+            if let fieldLabel, let now = Screen.snapshot(app, limit: 1500, menusFrom: snap), let f = now.elements.first(where: { $0.role == "field" && $0.label == fieldLabel }),
+               !f.value.isEmpty, f.value.count <= 80, f.value != text, f.value.contains(text) {
+                return ("Verified: \"\(text.prefix(60))\" was typed, but the field \"\(fieldLabel.prefix(30))\" now reads \"\(f.value)\": it already had other text. If that is not what is wanted, use key select all and type again to replace it.", false)
+            }
             return ("Verified: \"\(text.prefix(60))\" was typed. Look at the new screen: pick a suggestion if one appeared, or continue.", false)
         case "menu":
             guard let snap else { return ("FAILED: no app is open.", false) }
