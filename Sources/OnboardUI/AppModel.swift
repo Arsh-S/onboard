@@ -331,13 +331,28 @@ final class AppModel {
             let samples = rec.stop()
             Task {
                 var text = ""
-                if samples.count > 4000, let t { text = ((try? await t.transcribe(samples)) ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
+                // Whisper writes "Thank you." for silence, so audio with no speech in it is never transcribed.
+                if samples.count > 4000, AppModel.hasSpeech(samples), let t { text = ((try? await t.transcribe(samples)) ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
+                if AppModel.silenceWords.contains(text.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: " .!,"))), !AppModel.hasSpeech(samples, frames: 6) { text = "" }
                 // Voice lock: a request (not dictation) must come from the owner's voice.
                 if mode == .talk, !text.isEmpty, let self, await !self.voice.isOwner(samples) { await self.notOwner(); return }
                 await self?.heard(text, mode: mode, modelReady: t != nil)
             }
         }
     }
+
+    /// True when at least `frames` tenths of a second are louder than a quiet room.
+    nonisolated static func hasSpeech(_ samples: [Float], frames: Int = 3) -> Bool {
+        var loud = 0, i = 0
+        while i + 1600 <= samples.count {
+            var sq: Float = 0; for j in i..<(i + 1600) { sq += samples[j] * samples[j] }
+            if (sq / 1600).squareRoot() > 0.008 { loud += 1; if loud >= frames { return true } }
+            i += 1600
+        }
+        return false
+    }
+    /// What Whisper makes up when it is given near silence.
+    nonisolated static let silenceWords: Set<String> = ["thank you", "thanks", "thank you very much", "thanks for watching", "thank you for watching", "you", "bye", "okay", "so"]
 
     /// Mic button in the command bar: click to start, click again to send.
     func toggleBarMic() {

@@ -72,6 +72,10 @@ if args.count > 2, args[1] == "snap" {
         exit(0)
     }
     dispatchMain()
+} else if args.count > 2, args[1] == "relaytest" {
+    // What would be passed on for each request ("-" when it is not a pass-it-on request).
+    for r in args.dropFirst(2) { print((Agent.relayMessage(r) ?? "-") + "    <=  " + r) }
+    exit(0)
 } else if args.count > 2, args[1] == "mem" {
     Task { @MainActor in
         let mem = MemoryIndex(folders: [supportDir.appendingPathComponent("memory")], store: supportDir.appendingPathComponent("memory_index.json"))

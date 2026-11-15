@@ -252,6 +252,54 @@ public final class Agent {
         plan.isEmpty ? "(single step)" : plan.enumerated().map { ($0.offset < planDone ? "[x] " : $0.offset == planDone ? "[>] " : "[ ] ") + $0.element }.joined(separator: "\n")
     }
 
+    /// "Can you ask this Claude Code session what else I can demo?" -> "What else can I demo?": the words to pass on
+    /// when the request is to tell, ask or message the chat, session or assistant in front. nil for anything else.
+    nonisolated public static func relayMessage(_ request: String) -> String? {
+        let pattern = #"^\W*(?:(?:hey|ok|okay|so)\W+)?(?:on[\s-]?board\W+)?(?:(?:can|could|would|will) you (?:please |just |also )?|please )?(?:ask|tell|message|say to|type (?:in|into|to)|send) (?:this|the|my|that|our) (?:[\w-]+ ){0,3}?(?:session|chat|assistant|terminal|window|agent|bot|conversation|claude code|claude|codex|cursor|chatgpt|copilot)(?: session| chat| window)?\b[\s,:]*"#
+        guard let re = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+              let m = re.firstMatch(in: request, range: NSRange(request.startIndex..., in: request)), let r = Range(m.range, in: request) else { return nil }
+        var msg = request[r.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
+        for lead in ["to ", "that ", "if it can ", "whether it can "] where msg.lowercased().hasPrefix(lead) { msg = String(msg.dropFirst(lead.count)); break }
+        // "what else I can ask" -> "what else can I ask"
+        if let q = try? NSRegularExpression(pattern: #"^((?:what|which|how|where|when|why|who)(?: else| many| much| kind of \w+| \w+)??) (I|we|you|it|they) (can|could|should|would|will|do|did|does|is|are|was|were|have|has)\b"#, options: [.caseInsensitive]) {
+            msg = q.stringByReplacingMatches(in: msg, range: NSRange(msg.startIndex..., in: msg), withTemplate: "$1 $3 $2")
+        }
+        // "where the logs are" -> "where are the logs"
+        if let q = try? NSRegularExpression(pattern: #"^(where|what|who|how|when|why) (?!is |are |was |were |can |could |should |do |does |did |will |would )(.+?) (is|are|was|were)[.?!]*$"#, options: [.caseInsensitive]) {
+            msg = q.stringByReplacingMatches(in: msg, range: NSRange(msg.startIndex..., in: msg), withTemplate: "$1 $3 $2")
+        }
+        guard msg.split(separator: " ").count >= 2 else { return nil }
+        msg = msg.prefix(1).uppercased() + msg.dropFirst()
+        // The mark belongs to the message, not to "can you ask...?".
+        while let last = msg.last, ".?!".contains(last) { msg.removeLast() }
+        let first = msg.split(separator: " ").first.map { $0.lowercased() } ?? ""
+        msg += ["what", "which", "how", "where", "when", "why", "who", "can", "could", "is", "are", "do", "does", "will", "would", "should"].contains(first) ? "?" : "."
+        return msg
+    }
+
+    /// Passing a message on needs no thinking: type it into the app in front and press return.
+    func relay(_ message: String, snap: ScreenSnapshot?) async {
+        var step = AgentStep(action: "type", detail: String(message.prefix(80)), say: "Typing your message")
+        steps.append(step)
+        let t0 = now()
+        let (typed, _) = await perform("type", 0, message, "Typing your message", snap, &step)
+        step.result = String(typed.prefix(300)); step.secs = now() - t0; step.done = true; steps[steps.count - 1] = step
+        guard !typed.hasPrefix("FAILED"), !typed.hasPrefix("ERROR"), !cancelled else {
+            answer = cancelled ? "Stopped." : "I couldn't type that into \(target?.localizedName ?? "the app")."; lastVerdict = "not_done"
+            if !cancelled { await stage?.speak(answer) }
+            return
+        }
+        var send = AgentStep(action: "key", detail: "return", say: "Sending it")
+        steps.append(send)
+        let t1 = now()
+        let (sent, _) = await perform("key", 0, "return", "Sending it", lastSnapshot ?? snap, &send)
+        send.result = String(sent.prefix(300)); send.secs = now() - t1; send.done = true; steps[steps.count - 1] = send
+        let ok = !sent.hasPrefix("FAILED") && !sent.hasPrefix("Not approved")
+        lastVerdict = ok ? "done" : "not_done"
+        answer = ok ? "Sent." : "I typed it but left it unsent."
+        await stage?.speak(answer)
+    }
+
     public func run(_ text: String, app: NSRunningApplication? = nil) async {
         let req = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !req.isEmpty, !running else { return }
@@ -268,6 +316,7 @@ public final class Agent {
         lastSnapshot = snap
         if let s = snap { await stage?.scan(window: s.windowFrame, elements: s.elements.filter { $0.role != "text" }) }
         firstScreen = snap.map { render($0, previous: []) } ?? "(no window)"
+        if let message = Self.relayMessage(req), target != nil { await relay(message, snap: snap); return }
         await makePlan(req, screen: snap.map { "\($0.app), window \"\($0.window)\"" } ?? "nothing")
         var previousKeys: Set<String> = []
         var stale = 0
@@ -609,17 +658,12 @@ public final class Agent {
             let name = Self.keys.keys.sorted { $0.count > $1.count }.first { text.lowercased().contains($0) } ?? ""
             guard let app = target, let k = Self.keys[name] else { return ("FAILED: unknown key, nothing was pressed. Use one of: return, tab, escape, save, select all, copy, paste, undo, new, new tab", false) }
             stage?.thought(say.isEmpty ? "Pressing \(text)" : say)
-            // Running a shell command is the kind of thing Onboard asks about first.
-            if name == "return" || name == "enter", Self.terminals.contains(app.localizedName ?? ""),
-               let cmd = steps.dropLast().last(where: { $0.action == "type" })?.detail {
-                let ok = await stage?.approve("Run this command?", detail: cmd) ?? true
-                guard ok else { answer = "Okay, I left the command in the terminal without running it."; await stage?.speak(answer); return ("Not approved", true) }
-            }
             if name == "return" || name == "enter", ["Messages", "Mail", "Slack", "Discord", "WhatsApp"].contains(app.localizedName ?? "") {
                 let ok = await stage?.approve("Send this?", detail: "Pressing Return in \(app.localizedName ?? "this app") may send the message.") ?? false
                 guard ok else { return ("Not approved: \(owner) did not allow sending. Leave the draft as it is and answer.", false) }
             }
             guard await Screen.bringForward(app) else { return ("FAILED: could not bring the app forward, nothing was pressed.", false) }
+            try? await Task.sleep(nanoseconds: 250_000_000)      // being in front is not yet having the keyboard
             let beforeText = Screen.visibleText(app)
             Screen.key(k.0, command: k.1)
             _ = await settle(snap)
