@@ -4,7 +4,7 @@ import TTSKit
 /// TTSKit (Qwen3-TTS 0.6b) wrapper. `speak` streams straight to the speakers.
 public final class SpeechOut: @unchecked Sendable {
     public let tts: TTSKit
-    public var voice: Qwen3Speaker = .serena
+    public var voice: Qwen3Speaker = .ryan      // a man's voice (the others: aiden, eric, dylan)
     public static let voices: [Qwen3Speaker] = Qwen3Speaker.allCases
 
     /// `downloadBase` mirrors the Hugging Face cache layout (<base>/models/<org>/<repo>). The Qwen tokenizer is

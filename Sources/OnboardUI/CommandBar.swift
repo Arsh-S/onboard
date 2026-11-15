@@ -575,7 +575,22 @@ extension AppModel {
     }
 
     /// The turn is over: the answer's source chip and the close button become clickable.
-    func turnEnded() { panel.ignoresMouseEvents = false }
+    func turnEnded() {
+        panel.ignoresMouseEvents = false
+        // The result does not sit there: it leaves on its own once it has been said, or after a moment to read it.
+        let g = generation
+        Task { [weak self] in
+            var spoke = false
+            try? await Task.sleep(nanoseconds: 300_000_000)                       // speech starts just after the turn ends
+            while let self, self.model.speakingNow { spoke = true; try? await Task.sleep(nanoseconds: 150_000_000) }
+            guard let self else { return }
+            let read = spoke ? 1.2 : min(5, max(2.2, Double(self.model.answer.count) / 28))
+            try? await Task.sleep(nanoseconds: UInt64(read * 1_000_000_000))
+            guard g == self.generation, self.model.compact, self.panel.isVisible, !self.model.agent.running else { return }
+            self.model.clearScreen()
+            self.fadeOut(nil)
+        }
+    }
 
     /// Dictation is about to type: make sure our text field is not what receives the keys.
     func releaseKeyboard() {
