@@ -341,6 +341,100 @@ public final class Agent {
         return nil
     }
 
+    /// Texting a person, done on screen the way a person would do it: open Messages, start a new message, type the
+    /// name, pick the contact, type the text. Return is never pressed, so nothing is ever sent.
+    func textVisibly(to: String, body: String) async {
+        func pause(_ s: Double) async { try? await Task.sleep(nanoseconds: UInt64(s * 1_000_000_000)) }
+        func begin(_ action: String, _ detail: String, _ say: String) -> (Int, Double) {
+            steps.append(AgentStep(action: action, detail: detail, say: say)); stage?.thought(say); return (steps.count - 1, now())
+        }
+        func end(_ h: (Int, Double), _ result: String) { steps[h.0].result = result; steps[h.0].secs = now() - h.1; steps[h.0].done = true }
+        func stop(_ why: String) async { lastVerdict = "not_done"; answer = cancelled ? "Stopped." : why; if !cancelled { await stage?.speak(answer) } }
+        let textRoles = ["AXTextField", "AXComboBox", "AXSearchField", "AXTextArea"]
+
+        // 1. Open Messages.
+        var h = begin("open_app", "Messages", "Opening Messages")
+        guard let app = await Screen.open("Messages"), await Screen.bringForward(app) else { end(h, "FAILED: Messages did not open"); await stop("I couldn't open Messages."); return }
+        target = app
+        await pause(0.6)
+        end(h, "Messages is open and in front")
+        guard !cancelled, var snap = Screen.snapshot(app) else { await stop("I couldn't read the Messages window."); return }
+        lastSnapshot = snap
+        await stage?.scan(window: snap.windowFrame, elements: snap.elements.filter { $0.role != "text" })
+
+        // 2. Start a new message from the menu bar.
+        h = begin("menu", "New Message", "Starting a new message")
+        if let path = Screen.findMenu(snap, "New Message") {
+            let top = path.components(separatedBy: " > ").first ?? ""
+            let tf = snap.menuTitleFrames[top]
+            let bar = tf.map { CGPoint(x: $0.midX, y: $0.midY) } ?? CGPoint(x: snap.windowFrame.minX + 160, y: 12)
+            steps[h.0].detail = path; steps[h.0].frame = tf; steps[h.0].point = bar
+            await stage?.glide(to: bar, frame: nil, thought: "Starting a new message")
+            await stage?.click(at: bar)
+            _ = Screen.pressMenu(snap, path: path)
+        } else { Screen.key(45, command: true) }                      // Command-N does the same
+        await pause(0.9)
+        end(h, "A new message is started")
+        guard !cancelled else { await stop(""); return }
+
+        // 3. Type the name into the To field.
+        h = begin("type", "To: · \(to)", "Typing \(to) in the To field")
+        snap = Screen.snapshot(app, menusFrom: snap) ?? snap
+        func isTo(_ e: UIElement) -> Bool { let l = e.label.lowercased(); return e.role == "field" && (l.hasPrefix("to") || l.contains("recipient")) }
+        guard let field = snap.elements.first(where: isTo) else { end(h, "FAILED: there is no To field"); await stop("Messages is open, but I couldn't find the To field."); return }
+        let fp = CGPoint(x: field.frame.minX + min(90, field.frame.width / 2), y: field.frame.midY)
+        steps[h.0].frame = field.frame; steps[h.0].point = fp
+        await stage?.glide(to: fp, frame: field.frame, thought: "Typing \(to)")
+        await stage?.click(at: fp)
+        Screen.click(at: fp)
+        await pause(0.35)
+        guard textRoles.contains(Screen.focusedRole(app)) else { end(h, "FAILED: the To field did not take the keyboard"); await stop("I opened a new message but couldn't get into the To field."); return }
+        Screen.type(to)
+        await pause(1.4)
+        end(h, "Typed \(to)")
+        guard !cancelled else { await stop(""); return }
+
+        // 4. Pick the contact from the suggestions that appeared.
+        h = begin("click", to, "Choosing \(to) from the suggestions")
+        let known = Self.keys(of: snap)
+        let suggest = Screen.snapshot(app, menusFrom: snap) ?? snap
+        let first = to.lowercased().split(separator: " ").first.map(String.init) ?? to.lowercased()
+        var chosen = to
+        if let row = suggest.elements.first(where: { $0.id > 0 && $0.role != "field" && $0.label.lowercased().contains(first) && !known.contains($0.role + "|" + $0.label) && $0.frame.width > 20 }) {
+            let rp = CGPoint(x: row.frame.midX, y: row.frame.midY)
+            steps[h.0].detail = String(row.label.prefix(50)); steps[h.0].frame = row.frame; steps[h.0].point = rp
+            await stage?.glide(to: rp, frame: row.frame, thought: "Choosing \(row.label.prefix(30))")
+            await stage?.click(at: rp)
+            Screen.click(at: rp)
+            await pause(0.7)
+            chosen = String(row.label.prefix(40))
+            end(h, "Chose \(chosen)")
+        } else { end(h, "No suggestion appeared, so \(to) stays as typed") }
+        guard !cancelled else { await stop(""); return }
+
+        // 5. Type the message. It stays in the box: return is never pressed.
+        h = begin("type", String(body.prefix(60)), "Typing the message")
+        let compose = Screen.snapshot(app, menusFrom: snap) ?? suggest
+        let box = compose.elements.filter { $0.role == "field" && !isTo($0) && !$0.label.lowercased().contains("search") }.max { $0.frame.midY < $1.frame.midY }      // the lowest text box
+        guard let box else { end(h, "FAILED: there is no message box"); await stop("I addressed the message to \(chosen) but couldn't find where to type it."); return }
+        let bp = CGPoint(x: box.frame.minX + min(90, box.frame.width / 2), y: box.frame.midY)
+        steps[h.0].frame = box.frame; steps[h.0].point = bp
+        await stage?.glide(to: bp, frame: box.frame, thought: "Typing the message")
+        await stage?.click(at: bp)
+        Screen.click(at: bp)
+        await pause(0.35)
+        guard textRoles.contains(Screen.focusedRole(app)) else { end(h, "FAILED: the message box did not take the keyboard"); await stop("I addressed the message to \(chosen) but couldn't type into the message box."); return }
+        let before = Screen.visibleText(app)
+        Screen.type(body)
+        await pause(0.5)
+        let there = Self.appeared(body, before: before, after: Screen.visibleText(app))
+        end(h, there ? "Verified: \"\(body.prefix(60))\" is in the message box, not sent" : "Typed the message (it could not be read back)")
+        lastSnapshot = Screen.snapshot(app, menusFrom: snap) ?? compose
+        lastVerdict = "done"
+        answer = "I wrote \"\(body)\" to \(chosen) in Messages. It's ready, not sent."
+        await stage?.speak(answer)
+    }
+
     /// Passing a message on needs no thinking: type it into the app in front and press return.
     func relay(_ message: String, snap: ScreenSnapshot?) async {
         var step = AgentStep(action: "type", detail: String(message.prefix(80)), say: "Typing your message")
@@ -391,8 +485,9 @@ public final class Agent {
             lastVerdict = "done"
             await summarizeAfter(r); return
         }
+        if let t = Self.textRequest(req), Screen.allowForeground { await textVisibly(to: t.to, body: t.body); return }
         if let t = Self.textRequest(req) {
-            // Texting a person goes straight to a draft in Messages, addressed from Contacts. It is never sent.
+            // Headless checks cannot drive the real Messages window: there the draft is opened directly.
             var step = AgentStep(action: "draft_message", detail: "\(t.to) · \(t.body.prefix(60))", say: "Drafting a message to \(t.to)")
             steps.append(step); stage?.thought(step.say)
             let t0 = now()
