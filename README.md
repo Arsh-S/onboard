@@ -6,6 +6,17 @@
 
 Built for the Local AI Hackathon at Cornell (theme: RECREATE). Language is PrismML Bonsai 2. Voice is Argmax.
 
+## How it meets the brief
+
+| The hackathon asked for | Onboard |
+|---|---|
+| **Recreate** an existing AI app, fully on-device | Cloud voice assistants and cloud computer-use agents send your screen and your voice to a data center. Onboard does the same job on the Mac itself. |
+| Runs on a Mac with **WiFi turned off** | Every model runs locally. The app shows "0 B to cloud" and works with the network off. |
+| Uses **Bonsai** | Bonsai 2 9B plans every step and checks the result (with vision). Bonsai 2 2B gives quick answers. Both are served by LM Studio. |
+| Uses **Argmax** | WhisperKit hears, SpeakerKit recognizes the owner's voice, TTSKit speaks. |
+| "When might someone need it **without internet**?" | On a plane, in a lab or field site with no signal, in a clinic or law office where the screen cannot leave the building, and for anyone who relies on voice control and cannot lose it when the network drops. |
+| **Accessibility** track (LM Studio) | The whole Mac can be driven by voice alone: wake word, spoken answers, voice cancel, and a voice lock so only the owner is obeyed. |
+
 ## Why offline
 
 A radio signal to Mars takes up to 24 minutes each way. A crew member who asks Earth a question waits 40 minutes or more for the answer. NASA is testing an onboard medical assistant (CMO-DA, built with Google) for this reason, and CIMON, the assistant on the ISS, needed a cloud server in Frankfurt to think. An assistant that depends on a data center does not make the trip.
@@ -26,7 +37,12 @@ The same holds on Earth for anyone who cannot send their data to a cloud (lawyer
 - **Searches your notes and manuals** on disk with local embeddings, and names the file the answer came from.
 - **Asks before risky actions.** An email draft shows an approval card first, and Onboard never presses Send.
 - **Dictates anywhere.** Hold fn + Control and speak into any app.
-- **Voice lock (in progress).** It will obey only its owner's voice.
+- **Hands-free.** Say "Onboard, ..." and it starts, or say "Onboard" on its own and then the request. No keys at all.
+- **Voice lock.** A one minute guided training teaches it your voice. After that it obeys only its owner, and anyone else is turned away.
+- **Say "cancel".** While it works or talks, "cancel", "stop" or "never mind" stops it and clears the screen.
+- **Passes messages on.** "Ask this chat what the project does" types the question into the app in front and sends it.
+- **Asks instead of guessing.** "Remind me" with nothing after it gets a question back, not an invented reminder.
+- **Knows your words.** A plain text vocabulary file teaches the recognizer your names and tools.
 
 ## How it works
 
@@ -63,9 +79,9 @@ One turn:
 |---|---|---|
 | PrismML | Bonsai 2 9B (ternary, GGUF Q2_0) | Planner. Picks one constrained JSON action per step. |
 | PrismML | Bonsai 2 2B (ternary, GGUF Q2_0) | Router and quick replies. |
-| Argmax | WhisperKit | Hears you: push to talk and dictation. |
+| Argmax | WhisperKit | Hears you: large-v3 turbo for requests and dictation, base.en for the always-on wake word. |
 | Argmax | TTSKit | Speaks the answer. |
-| Argmax | SpeakerKit | Recognizes the owner's voice (voice lock, in progress). |
+| Argmax | SpeakerKit | Recognizes the owner's voice (voice lock). |
 | Nomic | nomic-embed-text v1.5 | Embeds notes and manuals for memory search. |
 
 LM Studio serves both Bonsai models and the embedding model on localhost. The Argmax kits run in process.
@@ -76,7 +92,9 @@ Measured on an M4 Pro MacBook Pro, WiFi off.
 
 | What | Number |
 |---|---|
-| Bonsai 2 9B, one agent decision (constrained JSON, thinking off) | about 0.85 s |
+| A simple request end to end (a reminder or a calendar event) | about 3 s |
+| Bonsai 2 9B, one agent step on a screen it has already read | about 2 to 3 s |
+| Bonsai 2 9B, one agent step after the screen changed | about 8 to 10 s |
 | Bonsai 2 9B generation speed | about 53 tokens/s |
 | Bonsai 2 2B, one quick reply | about 0.35 s |
 | Bonsai 2 2B generation speed | about 145 tokens/s |
@@ -120,6 +138,9 @@ Requires macOS 15 or later on Apple silicon, Xcode command line tools, and [LM S
 | Option-Space | Open the command bar and type a request |
 | Hold fn | Talk to Onboard, release to send |
 | Hold fn + Control | Dictate into whatever app is in front |
+| Say "Onboard, ..." | Hands-free request (turn on Always listening in settings) |
+| Say "cancel" | Stop the current run or the spoken answer |
+| Option-Space during a run | Stop and clear everything on screen |
 
 ## Design choices for small models
 
@@ -136,8 +157,9 @@ A 9B ternary model can drive a computer if the job is shaped to fit it.
 
 - Models download once while online. After that, nothing needs a network.
 - Apps with poor accessibility labels (some Electron apps, canvas-based tools, games) are driven from recognized text only, so controls that are icons without words stay out of reach.
-- Multi-step tasks are bounded to 8 steps. If the model repeats a step, Onboard stops and summarizes.
-- Voice lock is in progress. Today Onboard answers whoever holds the hotkey.
+- Multi-step tasks are bounded to 14 steps. A failed action is never repeated, and looking and searching are capped at two each.
+- A step that follows a screen change takes 8 to 10 seconds, so long tasks across several apps are slow.
+- In a terminal, Onboard presses return on what it typed without asking first. Sending in Messages or Mail and moving files still ask.
 - Memory search reads `.md` and `.txt` files only.
 
 ## Repo map
@@ -147,6 +169,7 @@ A 9B ternary model can drive a computer if the job is shaped to fit it.
 | `Sources/OnboardCore` | Agent loop, screen reader, Bonsai client, memory index, speech in and out |
 | `Sources/OnboardOverlay` | Agent cursor, x-ray, step dots, approval card |
 | `Sources/OnboardUI` | Command bar and voice pill |
+| `demo/VIDEO_SCRIPT.md` | Demo video script |
 | `docs/DEMO.md` | Video shot list and live demo plan |
 | `docs/design-spec.md` | Visual and motion spec |
 
