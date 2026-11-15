@@ -596,6 +596,7 @@ public final class Agent {
         try? out.write(to: dir.appendingPathComponent(f.string(from: Date()) + ".txt"), atomically: true, encoding: .utf8)
     }
 
+    static let browsers: Set<String> = ["company.thebrowser.Browser", "com.google.Chrome", "com.apple.Safari", "com.microsoft.edgemac", "com.brave.Browser", "org.mozilla.firefox", "com.openai.atlas", "ai.perplexity.comet"]
     static let terminals: Set<String> = ["Terminal", "iTerm2", "iTerm", "Ghostty", "Warp", "kitty", "Alacritty", "cmux"]
     static let keys: [String: (CGKeyCode, Bool)] = ["return": (36, false), "enter": (36, false), "tab": (48, false), "escape": (53, false), "save": (1, true),
                                                     "select all": (0, true), "copy": (8, true), "paste": (9, true), "undo": (6, true), "new": (45, true), "new tab": (17, true)]
@@ -641,9 +642,23 @@ public final class Agent {
             let p = CGPoint(x: el.frame.midX, y: el.frame.midY)
             await stage?.glide(to: p, frame: el.frame, thought: say.isEmpty ? "Clicking \(el.label)" : say)
             await stage?.click(at: p)
-            let ok = Screen.press(snap, id: tid)
+            // Web pages often accept an accessibility press and then do nothing with it. In a browser, click for real.
+            var ok = false
+            if Screen.allowForeground, let app = target, Self.browsers.contains(app.bundleIdentifier ?? ""), el.frame.width > 2, await Screen.bringForward(app) {
+                try? await Task.sleep(nanoseconds: 150_000_000)
+                Screen.click(at: p); ok = true
+            } else { ok = Screen.press(snap, id: tid) }
             if snap.seen, ok { try? await Task.sleep(nanoseconds: 700_000_000); return ("Clicked \(el.label)", false) }
-            let changed = await settle(snap)
+            var changed = await settle(snap)
+            // A link that jumps within the page changes no controls, only where they are.
+            if ok, !changed, let t = target {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                if let now = Screen.snapshot(t, limit: 1500, menusFrom: snap) {
+                    let same = now.elements.first { $0.role == el.role && $0.label == el.label }
+                    if same == nil || abs(same!.frame.minY - el.frame.minY) > 20 { return ("Verified: clicked \(el.label) and the page moved to that part. If that was the whole request, answer now.", false) }
+                    changed = now.signature != snap.signature
+                }
+            }
             return (!ok ? "FAILED: could not click \(el.label). Try a menu command for the same thing, or a different element." : changed ? "Clicked \(el.label); the screen changed" : "Clicked \(el.label), but nothing visibly changed. It may not have worked.", false)
         case "type":
             guard let app = target else { return ("FAILED: there is no app to type into.", false) }
