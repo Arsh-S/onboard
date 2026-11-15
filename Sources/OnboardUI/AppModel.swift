@@ -245,6 +245,7 @@ final class AppModel {
     /// Option-Space sends Onboard away: the cursor overlay and the pill go at once, not when the current step returns.
     func clearScreen() {
         OverlayStage.shared.dismiss()
+        if speakingNow, let s = speech { speakingNow = false; setPill(.idle); Task { await s.stop() } }      // stop talking too
         if recording == nil, pill != .speaking { setPill(.idle); liveTranscript = "" }
     }
 
@@ -268,8 +269,9 @@ final class AppModel {
         setPill(.speaking)
         Task { [weak self] in
             _ = try? await s.speak(text)
-            self?.speakingNow = false
-            self?.finishPill()
+            guard let self, self.speakingNow else { return }      // cut short by cancel: the pill is already cleared
+            self.speakingNow = false
+            self.finishPill()
         }
     }
 
@@ -394,7 +396,7 @@ final class AppModel {
             self.run(text, app: Screen.targetApp(excluding: Bundle.main.bundleIdentifier))
         }
         voice.onRejected = { [weak self] in self?.notOwner() }
-        voice.isWorking = { [weak self] in self?.agent.running ?? false }
+        voice.isWorking = { [weak self] in (self?.agent.running ?? false) || (self?.speakingNow ?? false) }
         voice.onCancel = { [weak self] in
             guard let self else { return }
             self.stop()

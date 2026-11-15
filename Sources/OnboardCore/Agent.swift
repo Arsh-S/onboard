@@ -62,6 +62,7 @@ public final class Agent {
     // judge confirm the result before anything is reported as done.
 
     static let actions = ["click", "type", "key", "menu", "scroll", "open_app", "wait", "look", "replace_selection", "list_files", "move_files", "search_memory", "add_reminder", "add_event", "point", "done"]
+    static let capped = ["look", "search_memory", "list_files"]
     static let changing: Set<String> = ["type", "click", "menu", "key", "open_app", "scroll", "replace_selection"]
 
     var system: String {
@@ -107,6 +108,7 @@ public final class Agent {
         7. Never invent facts: use search_memory or the screen. For a question about facts, search_memory, then done with the answer.
         8. If any part of the request is unmet, uncertain or unverifiable, done must have success false and say what is left. If the request is missing something you need (what to remind about, who to message, what to write), do not fill it in: use done with success false and ask for it.
         9. Use the most direct action. To add text to a document, type into its text area: no clicking, selecting or cursor positioning first. For reminders and calendar events use add_reminder and add_event directly: never open those apps. To list or move files use list_files and move_files directly: never the terminal or Finder. To rewrite SELECTED TEXT use replace_selection.
+        11. "Tell", "ask" or "message" this chat, this session, this assistant or this terminal means: type those words into the app in front, then press return. You are passing a message on: type only the message itself, worded as \(owner) would say it to them, without "can you tell this session to". Do not look for settings, search memory, or try to do what the message says yourself.
         10. Only write values you have actually read. When a task needs a number, name or fact from the app in front, find it on screen first and copy it into memory BEFORE you open another app. Never guess a value.
 
         Examples (one step each):
@@ -118,6 +120,8 @@ public final class Agent {
         {"prev_result":"none","memory":"A reminder is needed.","next_goal":"Add the reminder","action":"add_reminder","target":0,"target_label":"","text":"Call Sam | tomorrow 9am","success":false}
         TASK: add lunch with Maya to my calendar on Friday at noon. (never open a calendar app: add_event does it)
         {"prev_result":"none","memory":"A calendar event is needed.","next_goal":"Add the event","action":"add_event","target":0,"target_label":"","text":"Lunch with Maya | Friday 12pm","success":false}
+        TASK: can you tell this session to also make the font bigger? ELEMENTS: [2] field "Terminal content area" (pass the message on: type it, do not do it)
+        {"prev_result":"none","memory":"Pass the message to the session in front.","next_goal":"Type the message into the session's text area","action":"type","target":2,"target_label":"Terminal content area","text":"Also make the font bigger","success":false}
         TASK: what does the manual say about filter changes?
         {"prev_result":"none","memory":"Need the filter procedure from the notes.","next_goal":"Search the notes","action":"search_memory","target":0,"target_label":"","text":"filter change procedure","success":false}
         TASK: what does this document say? (the answer is already on screen)
@@ -204,7 +208,7 @@ public final class Agent {
         let named = snap.elements.filter { $0.id > 0 && $0.role != "seen" }.prefix(snap.seen ? 40 : 70)
         for e in named + snap.elements.filter({ $0.role == "seen" }).prefix(60) {
             let isNew = !previous.isEmpty && !previous.contains(e.role + "|" + e.label)
-            out += "\(isNew ? "*" : "")[\(e.id)] \(e.role) \"\(e.label.prefix(60))\"" + (e.value.isEmpty ? "" : " = \"\(e.value.prefix(70))\"") + "\n"
+            out += "\(isNew ? "*" : "")[\(e.id)] \(e.role) \"\(e.label.prefix(60))\"" + (e.value.isEmpty ? "" : " = \"\(e.value.count > 150 ? e.value.prefix(50) + " … " + e.value.suffix(90) : e.value)\"") + "\n"      // the end of a field is where typing lands
         }
         var chars = 0
         for t in snap.elements.filter({ $0.id == 0 }) where chars < 900 { out += "- \"\(t.label.prefix(160))\"\n"; chars += min(t.label.count, 160) }
@@ -280,7 +284,9 @@ public final class Agent {
 
             let ids = [0] + (snap?.elements.filter { $0.id > 0 }.map(\.id) ?? [])
             let lastStep = stepNo == maxSteps || consecutiveFailures >= 5
-            let allowed = lastStep ? ["done"] : Self.actions.filter { $0 != "replace_selection" || !selected.isEmpty }
+            // Looking and searching are capped: a small model that is unsure keeps doing them instead of acting.
+            let spent = Self.capped.filter { a in steps.filter { $0.action == a }.count >= 2 }
+            let allowed = lastStep ? ["done"] : Self.actions.filter { ($0 != "replace_selection" || !selected.isEmpty) && !spent.contains($0) }
             let schema = "{\"type\":\"object\",\"properties\":{"
                 + "\"prev_result\":{\"type\":\"string\",\"enum\":[\"none\",\"success\",\"failed\",\"unknown\"]},"
                 + "\"memory\":{\"type\":\"string\",\"maxLength\":170},\"next_goal\":{\"type\":\"string\",\"maxLength\":110},"
@@ -294,6 +300,7 @@ public final class Agent {
             if stale >= 3 { notes.append("Your actions might not be having the intended effect: the screen has not changed for \(stale) steps.") }
             if !blocked.isEmpty { notes.append("BLOCKED (they did nothing, do not use them): " + blocked.sorted().joined(separator: "; ")) }
             if stepNo >= maxSteps * 3 / 4 && !lastStep { notes.append("You are running out of steps. Finish what matters and use done.") }
+            if !spent.isEmpty { notes.append("\(spent.joined(separator: " and ")) cannot be used again in this task: you have what they can give. Act on the app in front, or use done and say what you could not find.") }
             if lastStep { notes.append("This is the last step. Use done and report honestly what was and was not achieved.") }
             let hints = snap.map { Screen.menuHints($0, for: req) } ?? []
             let fresh = previousKeys.isEmpty ? [] : (snap?.elements ?? []).filter { $0.id > 0 && !previousKeys.contains($0.role + "|" + $0.label) }
@@ -388,6 +395,7 @@ public final class Agent {
             let after = await look(Screen.allowForeground ? (Screen.targetApp(excluding: ownBundle) ?? target) : target, menusFrom: snap)
             let effect = Self.changes(snap, after)
             let failed = result.hasPrefix("FAILED") || result.hasPrefix("ERROR")
+            if Self.capped.contains(action) { blocked.insert(signature) }      // asking the same thing again gives the same answer
             if failed {
                 // A failed step is not tried again as is: at once for actions that fail the same way every time (a menu
                 // command or app that does not exist), on the second identical failure for the rest.
@@ -445,6 +453,7 @@ public final class Agent {
         let sys = """
         You are a strict judge of an assistant that operates a Mac for \(owner). Decide whether the task was really completed, from the action log and the final screen only. Check whether each action the assistant tried actually happened.
         verdict is true only if the final screen or a result proves every part of the task. If anything is unmet, uncertain or unverifiable, verdict is false.
+        If the task was to tell, ask or message the chat, session or assistant in front, the task is only to pass the message on: once the message is typed there, it is done. The assistant does not have to do what the message says.
         A typed command that was never run is not done. Text in the wrong place is not done. A draft that is ready but not sent counts as done when the task was to draft.
         \(picture == nil ? "" : "A picture of the window as it looks right now is attached. Look at it: what is visible in the picture outweighs what the log claims.\n        ")evidence: what on the final screen proves your verdict. failure_reason: what is missing ("" if done). reply: one or two short spoken sentences telling \(owner) honestly what happened and what is left. JSON only.
         """

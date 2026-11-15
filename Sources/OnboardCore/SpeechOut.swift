@@ -19,6 +19,14 @@ public final class SpeechOut: @unchecked Sendable {
         try await tts.loadModels()
     }
 
+    private var halted = false
+
+    /// Stop talking now: generation ends at the next chunk and what is already queued is dropped.
+    public func stop() async {
+        halted = true
+        await tts.audioOutput.stopPlayback(waitForCompletion: false)
+    }
+
     public var options: GenerationOptions { GenerationOptions(temperature: 0.7, concurrentWorkerCount: 1) }
 
     /// Returns time to first audio buffer and total generation time.
@@ -27,9 +35,10 @@ public final class SpeechOut: @unchecked Sendable {
         let t0 = now()
         final class Box: @unchecked Sendable { var first: Double? }
         let box = Box()
-        _ = try await tts.play(text: text, speaker: voice, language: .english, options: options) { p in
+        halted = false
+        _ = try await tts.play(text: text, speaker: voice, language: .english, options: options) { [weak self] p in
             if box.first == nil, !p.audio.isEmpty { box.first = now() - t0 }
-            return true
+            return !(self?.halted ?? false)
         }
         return (box.first ?? 0, now() - t0)
     }

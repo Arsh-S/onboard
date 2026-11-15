@@ -138,7 +138,7 @@ public enum Screen {
                     // A row and its only cell say the same thing: keep one.
                     let dup = (kind == "cell" || kind == "row") && els.contains { $0.id > 0 && $0.label == label && ($0.role == "row" || $0.role == "cell") && $0.frame.intersects(f) }
                     if !(label.isEmpty && value.isEmpty) && !dup {
-                        els.append(UIElement(id: id, role: kind, label: label.isEmpty ? "(unnamed \(kind))" : label, value: kind == "field" || kind == "checkbox" || kind == "menu" || kind == "slider" ? String(value.prefix(120)) : "", frame: f))
+                        els.append(UIElement(id: id, role: kind, label: label.isEmpty ? "(unnamed \(kind))" : label, value: kind == "field" || kind == "checkbox" || kind == "menu" || kind == "slider" ? (value.count > 260 ? value.prefix(100) + " … " + value.suffix(150) : value) : "", frame: f))
                         refs[id] = e; id += 1
                     }
                 }
