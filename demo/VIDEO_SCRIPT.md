@@ -20,14 +20,17 @@ through LM Studio. Argmax does the hearing, the speaking, and knows my voice."
 "Remind me."
 (It answers: "What should the reminder say, and when?")
 
-## 3. Calendar (8 s)  [hold fn]
-"Add lunch with Bilal to my calendar Friday at noon."
-
-## 4. Its own cursor, and it checks its work (12 s)  [click the Maintenance log window, hold fn]
+## 3. It works the app in front with its own cursor (14 s)  [click the Maintenance log window, hold fn]
 "Add a line that says pump A checked."
+(Watch the teal cursor fly to the document, type the line, and check its own work.)
 
-## 5. Answers from my files, offline (10 s)  [hold fn]
-"What do my notes say about filter changes?"
+## 4. It rewrites what you select, in place (14 s)
+DO: drag to select the line "hey can u send me the pump numbers asap thx".
+[hold fn]  "Make this sound more professional."
+(The sentence is replaced right in the document.)
+
+## 5. Calendar (6 s)  [hold fn]
+"Add lunch with Jared to my calendar Friday at noon."
 
 ## 6. Hands-free (15 s)  [no keys]
 SAY first: "No keyboard at all."
@@ -44,7 +47,7 @@ it still works. Zero bytes to the cloud. That's Onboard."
 
 ## After recording
 1. Turn WiFi back on: hold fn and say "Turn the WiFi on", or use the menu bar.
-2. Check the video is under 2:00. If it is over, cut section 3 or 5.
+2. Check the video is under 2:00. If it is over, cut section 5.
 3. Upload it, then post the submission.
 
 ## Submission text
