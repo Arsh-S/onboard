@@ -29,6 +29,11 @@ private let voiceLog = Logger(subsystem: "net.arshsingh.onboard", category: "voi
     @ObservationIgnored var canListen: () -> Bool = { true }          // false while Onboard speaks or push-to-talk records
     @ObservationIgnored var onCommand: ((String) -> Void)?
     @ObservationIgnored var onRejected: (() -> Void)?
+    /// "Cancel" said while Onboard is working (hands-free stop).
+    @ObservationIgnored var isWorking: () -> Bool = { false }
+    @ObservationIgnored var onCancel: (() -> Void)?
+    /// A request ends after this long a pause (a lone word like "Onboard" or "cancel" still registers after 0.6 s).
+    static let requestPause = 1.4
 
     @ObservationIgnored private var spk: SpeakerIdentifier?
     @ObservationIgnored private let capture = AudioCapture()
@@ -175,12 +180,19 @@ private let voiceLog = Logger(subsystem: "net.arshsingh.onboard", category: "voi
     func startListening() {
         guard alwaysListening, !listening, !enrolling, state == .ready else { return }
         listening = true
+        vad.silenceAfterSpeech = Int(Self.requestPause * 10)
         capture.onChunk = { [weak self] chunk in
             guard let self else { return }
             self.calibrate(chunk)
             for u in self.vad.feed(chunk) {
                 Task { @MainActor in await self.handle(u) }
             }
+        }
+        capture.onLevel = { [weak self] rms in
+            DispatchQueue.main.async { MainActor.assumeIsolated {
+                guard let self, Date() < self.armedUntil else { return }
+                self.onLevel?(rms)
+            } }
         }
         do { try capture.start(); voiceLog.notice("always listening started") } catch { listening = false; voiceLog.error("always listening could not start the mic") }
     }
@@ -210,8 +222,28 @@ private let voiceLog = Logger(subsystem: "net.arshsingh.onboard", category: "voi
     /// Set when "Onboard" was said on its own: the next thing said within a few seconds is the request.
     @ObservationIgnored private var armedUntil = Date.distantPast
     @ObservationIgnored var onArmed: (() -> Void)?
+    /// Mic level while Onboard waits for the request after the wake word, so the pill's bars move as they do for push to talk.
+    @ObservationIgnored var onLevel: ((Float) -> Void)?
+
+    /// "cancel", "stop", "never mind", with or without the wake word in front. Only ever a short phrase on its own.
+    static func isCancel(_ text: String) -> Bool {
+        let rest = command(in: text) ?? text
+        let words = rest.lowercased().split { !$0.isLetter }.map(String.init)
+        guard !words.isEmpty, words.count <= 3 else { return false }
+        let phrase = words.joined(separator: " ")
+        return ["cancel", "cancel that", "cancel it", "stop", "stop that", "stop it", "never mind", "nevermind", "abort", "no stop", "no cancel"].contains(phrase)
+    }
 
     private func handle(_ u: EnergyVAD.Utterance) async {
+        // While Onboard works it takes no new orders, but its owner can still call it off.
+        if isWorking() {
+            guard u.duration >= 0.3, u.duration < 3, let t = transcriber(), let text = try? await t.transcribe(u.audio), Self.isCancel(text) else { return }
+            guard await isOwner(u.audio) else { voiceLog.notice("cancel from another voice, ignored"); return }
+            voiceLog.notice("cancel heard")
+            armedUntil = .distantPast
+            if isWorking() { onCancel?() }
+            return
+        }
         guard canListen() else { return }
         guard u.duration >= 0.4, u.duration < 20, let t = transcriber() else { return }
         guard let text = try? await t.transcribe(u.audio), !Self.isNoise(text) else { return }

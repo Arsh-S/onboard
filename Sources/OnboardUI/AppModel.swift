@@ -239,6 +239,8 @@ final class AppModel {
     func submit() { run(query, app: targetApp) }
 
     func stop() { agent.cancel(); clearScreen() }
+    /// Wired by the app: closes the command bar when a run is called off by voice.
+    @ObservationIgnored var onCancelled: (() -> Void)?
 
     /// Option-Space sends Onboard away: the cursor overlay and the pill go at once, not when the current step returns.
     func clearScreen() {
@@ -323,7 +325,7 @@ final class AppModel {
     }
 
     private func pushLevel(_ level: Float) {
-        guard recording != nil else { return }
+        guard recording != nil || pill == .listening else { return }      // push to talk, or waiting for a request after the wake word
         // Loudness in decibels mapped to 0...1 (quiet room about -55 dB, normal speech -35 to -15 dB), with a fast
         // attack and a slower release so the bars jump with each syllable and settle smoothly.
         let db = 20 * log10(max(level, 0.00001))
@@ -392,10 +394,19 @@ final class AppModel {
             self.run(text, app: Screen.targetApp(excluding: Bundle.main.bundleIdentifier))
         }
         voice.onRejected = { [weak self] in self?.notOwner() }
+        voice.isWorking = { [weak self] in self?.agent.running ?? false }
+        voice.onCancel = { [weak self] in
+            guard let self else { return }
+            self.stop()
+            self.onCancelled?()
+            self.liveTranscript = "Cancelled"; self.setPill(.thinking); self.clearPill(after: 1.4)
+        }
         voice.onArmed = { [weak self] in
             guard let self else { return }
+            self.levels = Array(repeating: 0, count: self.levels.count)
             self.liveTranscript = "Yes?"; self.setPill(.listening); self.clearPill(after: 7)
         }
+        voice.onLevel = { [weak self] level in self?.pushLevel(level) }
         Task { await voice.load(downloadBase: base) }
     }
 

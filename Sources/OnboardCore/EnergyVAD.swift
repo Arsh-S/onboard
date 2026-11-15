@@ -12,6 +12,10 @@ public final class EnergyVAD {
     /// Once an utterance is at least `pauseCutAfter` seconds long, a pause of `pauseCut` frames also ends it.
     /// Fast turn-taking leaves gaps of 0.2 to 0.4 s; waiting for 0.6 s glues two speakers into one caption.
     public var pauseCut = 3
+    /// When set, replaces the two rules above: something short (a word or two, under `shortSpeech` seconds) still ends
+    /// after `minSilence`, anything longer only after this many silent frames. Lets a person pause mid-sentence.
+    public var silenceAfterSpeech: Int?
+    public var shortSpeech: Float = 0.9
     public var pauseCutAfter: Float = 1.5
     public var minUtterance: Float = 0.8
     public let carryWindow: Double = 2.5
@@ -55,7 +59,9 @@ public final class EnergyVAD {
             } else if inSpeech {
                 silentRun += 1
                 let spoken = Float(lastSpeechFrame + 1 - speechStartFrame) * Float(frame) / Float(SR)
-                if silentRun >= minSilence || (silentRun >= pauseCut && spoken >= pauseCutAfter) {
+                let ended = silenceAfterSpeech.map { silentRun >= (spoken < shortSpeech ? minSilence : $0) }
+                    ?? (silentRun >= minSilence || (silentRun >= pauseCut && spoken >= pauseCutAfter))
+                if ended {
                     inSpeech = false; speaking = false
                     let s = max(speechStartFrame - preRoll, 0), e = lastSpeechFrame + 1 + postRoll
                     let a = max(s * frame - bufferStart, 0), b = min(e * frame - bufferStart, buffer.count)

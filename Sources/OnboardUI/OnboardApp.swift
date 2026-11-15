@@ -34,6 +34,7 @@ public enum OnboardApp {
 
         model.onShowCompact = { [weak self] in self?.bar.showCompact() }
         model.onTurnEnded = { [weak self] in self?.bar.turnEnded() }
+        model.onCancelled = { [weak self] in self?.bar.close() }
         model.onReleaseKeyboard = { [weak self] in self?.bar.releaseKeyboard() }
         model.onNeedSettings = { [weak self] in self?.settings.show() }
 
