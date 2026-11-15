@@ -279,6 +279,15 @@ public final class Agent {
         return msg
     }
 
+    /// "Turn the WiFi off", "switch wifi on", "disable Wi-Fi": true for on, false for off, nil for anything else.
+    nonisolated public static func wifiRequest(_ request: String) -> Bool? {
+        let l = request.lowercased()
+        guard l.range(of: #"\bwi[\s-]?fi\b"#, options: .regularExpression) != nil, l.split(separator: " ").count <= 9 else { return nil }
+        if l.range(of: #"\b(turn|switch|shut|put)\b.*\boff\b|\b(disable|kill|disconnect)\b"#, options: .regularExpression) != nil { return false }
+        if l.range(of: #"\b(turn|switch|put)\b.*\bon\b|\b(enable|reconnect)\b|\bback on\b"#, options: .regularExpression) != nil { return true }
+        return nil
+    }
+
     /// Passing a message on needs no thinking: type it into the app in front and press return.
     func relay(_ message: String, snap: ScreenSnapshot?) async {
         var step = AgentStep(action: "type", detail: String(message.prefix(80)), say: "Typing your message")
@@ -319,6 +328,16 @@ public final class Agent {
         if let s = snap { await stage?.scan(window: s.windowFrame, elements: s.elements.filter { $0.role != "text" }) }
         firstScreen = snap.map { render($0, previous: []) } ?? "(no window)"
         if let message = Self.relayMessage(req), target != nil { await relay(message, snap: snap); return }
+        if let on = Self.wifiRequest(req) {
+            var step = AgentStep(action: "wifi", detail: on ? "on" : "off", say: "Turning WiFi \(on ? "on" : "off")")
+            steps.append(step); stage?.thought(step.say)
+            let t0 = now()
+            let r = Tools.setWifi(on)
+            step.result = r; step.secs = now() - t0; step.done = true; steps[steps.count - 1] = step
+            lastVerdict = r.hasPrefix("FAILED") ? "not_done" : "done"
+            answer = r.hasPrefix("FAILED") ? "I couldn't change the WiFi setting." : r
+            await stage?.speak(answer); return
+        }
         await makePlan(req, screen: snap.map { "\($0.app), window \"\($0.window)\"" } ?? "nothing")
         var previousKeys: Set<String> = []
         var stale = 0

@@ -10,6 +10,26 @@ public enum Tools {
     /// Tests set this so nothing is written to the user's Reminders, Calendar or Mail.
     nonisolated(unsafe) public static var dryRun = false
 
+    /// Turn the Mac's WiFi on or off (the same switch as the menu bar), then read the setting back.
+    public static func setWifi(_ on: Bool) -> String {
+        if dryRun { return "(dry run) WiFi would be turned \(on ? "on" : "off")" }
+        func run(_ args: [String]) -> String {
+            let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/sbin/networksetup"); p.arguments = args
+            let out = Pipe(); p.standardOutput = out; p.standardError = out
+            guard (try? p.run()) != nil else { return "" }
+            p.waitUntilExit()
+            return String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        }
+        // The WiFi device is usually en0, but ask.
+        var device = "en0"
+        let ports = run(["-listallhardwareports"]).components(separatedBy: "\n")
+        if let i = ports.firstIndex(where: { $0.contains("Wi-Fi") }), i + 1 < ports.count, let d = ports[i + 1].components(separatedBy: ": ").last, !d.isEmpty { device = d }
+        _ = run(["-setairportpower", device, on ? "on" : "off"])
+        let now = run(["-getairportpower", device]).lowercased()
+        let isOn = now.hasSuffix("on\n") || now.hasSuffix("on")
+        return isOn == on ? "WiFi is \(on ? "on" : "off")." : "FAILED: I could not turn WiFi \(on ? "on" : "off")."
+    }
+
     static let numberWords: [String: Double] = ["a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "ten": 10, "fifteen": 15, "twenty": 20, "thirty": 30, "half": 0.5]
 
     /// "in two hours", "in 20 minutes", "in 3 days" (NSDataDetector misses these), else any date it can find.

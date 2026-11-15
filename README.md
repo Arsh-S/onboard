@@ -6,16 +6,16 @@
 
 Built for the Local AI Hackathon at Cornell (theme: RECREATE). Language is PrismML Bonsai 2. Voice is Argmax.
 
-## How it meets the brief
+## At a glance
 
-| The hackathon asked for | Onboard |
+| | |
 |---|---|
-| **Recreate** an existing AI app, fully on-device | Cloud voice assistants and cloud computer-use agents send your screen and your voice to a data center. Onboard does the same job on the Mac itself. |
-| Runs on a Mac with **WiFi turned off** | Every model runs locally. The app shows "0 B to cloud" and works with the network off. |
-| Uses **Bonsai** | Bonsai 2 9B plans every step and checks the result (with vision). Bonsai 2 2B gives quick answers. Both are served by LM Studio. |
-| Uses **Argmax** | WhisperKit hears, SpeakerKit recognizes the owner's voice, TTSKit speaks. |
-| "When might someone need it **without internet**?" | On a plane, in a lab or field site with no signal, in a clinic or law office where the screen cannot leave the building, and for anyone who relies on voice control and cannot lose it when the network drops. |
-| **Accessibility** track (LM Studio) | The whole Mac can be driven by voice alone: wake word, spoken answers, voice cancel, and a voice lock so only the owner is obeyed. |
+| **Fully on the Mac** | Cloud voice assistants and cloud computer-use agents send your screen and your voice to a data center. Onboard does the same job on the Mac itself. |
+| **Works with WiFi off** | Every model runs locally. The app shows "0 B to cloud", and "turn the WiFi off" is something you can ask it to do. |
+| **Thinks with Bonsai** | Bonsai 2 9B plans every step and checks the result (with vision). Bonsai 2 2B gives quick answers. Both are served by LM Studio. |
+| **Hears and speaks with Argmax** | WhisperKit hears, SpeakerKit recognizes the owner's voice, TTSKit speaks. |
+| **Where it matters** | On a plane, in a lab or field site with no signal, in a clinic or law office where the screen cannot leave the building, and for anyone who relies on voice control and cannot lose it when the network drops. |
+| **Usable by voice alone** | Wake word, spoken answers, voice cancel, and a voice lock so only the owner is obeyed. |
 
 ## Why offline
 
@@ -41,6 +41,7 @@ The same holds on Earth for anyone who cannot send their data to a cloud (lawyer
 - **Voice lock.** A one minute guided training teaches it your voice. After that it obeys only its owner, and anyone else is turned away.
 - **Say "cancel".** While it works or talks, "cancel", "stop" or "never mind" stops it and clears the screen.
 - **Passes messages on.** "Ask this chat what the project does" types the question into the app in front and sends it.
+- **Flips the WiFi.** "Turn the WiFi off" does it, and Onboard keeps working.
 - **Asks instead of guessing.** "Remind me" with nothing after it gets a question back, not an invented reminder.
 - **Knows your words.** A plain text vocabulary file teaches the recognizer your names and tools.
 
