@@ -167,7 +167,25 @@ final class AppModel {
     private func setHearing(_ s: LoadState) { hearing = s }
     private func setSpeaking(_ s: LoadState) { speaking = s }
     private func accurateLoaded(_ t: Transcriber) { accurate = t; applyNames(); captureLog.notice("accurate speech model loaded: \(AppModel.accurateModel, privacy: .public)") }
-    private func applyNames() { if !owner.isEmpty { transcriber?.setNames([owner, "Onboard"]); accurate?.setNames([owner, "Onboard"]) } }
+    private func applyNames() {
+        let names = (owner.isEmpty ? [] : [owner]) + ["Onboard"]
+        transcriber?.setNames(names)                               // the wake word check keeps a short list
+        accurate?.setNames(names + Self.vocabulary())              // deliberate speech gets the full word bank
+    }
+
+    /// Words Whisper should know how to spell: one per line in Application Support/Onboard/vocabulary.txt.
+    /// The file is created with a starter list and can be edited by hand; it is read at launch.
+    static let vocabularyFile = URL(fileURLWithPath: NSHomeDirectory() + "/Library/Application Support/Onboard/vocabulary.txt")
+    static let starterVocabulary = ["Claude Code", "Claude", "cmux", "LM Studio", "Bonsai", "Whisper", "Xcode", "GitHub", "TextEdit", "Finder", "Safari", "Arc",
+                                    "Notion", "Spotify", "Messages", "Slack", "Discord", "Terminal", "Raycast", "Cornell", "Bilal", "text-to-speech", "hands-free"]
+    static func vocabulary() -> [String] {
+        if !FileManager.default.fileExists(atPath: vocabularyFile.path) {
+            try? FileManager.default.createDirectory(at: vocabularyFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? starterVocabulary.joined(separator: "\n").write(to: vocabularyFile, atomically: true, encoding: .utf8)
+        }
+        let lines = (try? String(contentsOf: vocabularyFile, encoding: .utf8))?.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) } ?? starterVocabulary
+        return Array(lines.filter { !$0.isEmpty && !$0.hasPrefix("#") }.prefix(60))      // a very long list makes Whisper invent words
+    }
 
     func checkBonsai(measure: Bool) async {
         guard let models = try? await bonsai.models() else { thinking = .failed("LM Studio is not running"); return }

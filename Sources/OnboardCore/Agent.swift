@@ -570,8 +570,15 @@ public final class Agent {
             }
             Screen.type(text)
             try? await Task.sleep(nanoseconds: 350_000_000)
-            guard Self.appeared(text, before: before, after: Screen.visibleText(app)) else {
-                return ("FAILED: the text did not appear in \(app.localizedName ?? "the app"). Do not claim it was typed.", false)
+            let afterText = Screen.visibleText(app)
+            if !Self.appeared(text, before: before, after: afterText) {
+                // The app may simply not expose its text (a GPU-drawn terminal): then read it from a picture instead.
+                guard afterText == before, let lines = await pictureText(snap) else {
+                    return ("FAILED: the text did not appear in \(app.localizedName ?? "the app"). Do not claim it was typed.", false)
+                }
+                guard Self.mostlySeen(text, in: lines) else {
+                    return ("FAILED: the text is not visible in \(app.localizedName ?? "the app") after typing. Do not claim it was typed, and do not type it again: check where the keyboard focus is.", false)
+                }
             }
             if isTerminal { return ("Verified: the command is typed at the prompt but NOT run yet. Use key return to run it.", false) }
             _ = await settle(snap)
@@ -619,7 +626,8 @@ public final class Agent {
             if Self.terminals.contains(app.localizedName ?? "") && (name == "return" || name == "enter") {
                 // Read what the terminal printed, so the answer reports the real outcome (errors, a password prompt, output).
                 try? await Task.sleep(nanoseconds: 700_000_000)
-                let after = Screen.visibleText(app)
+                var after = Screen.visibleText(app)
+                if after.count < 40, let lines = await pictureText(snap) { after = lines.suffix(10).joined(separator: "\n") }      // nothing readable: use the picture
                 let new = after.count > beforeText.count ? String(after.suffix(after.count - beforeText.count + 80)) : String(after.suffix(300))
                 let tail = new.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }.suffix(8).joined(separator: " / ")
                 return ("Ran it. The terminal now shows: \(tail.suffix(500)). Report exactly this outcome: if it shows Password:, say it is waiting for \(owner)'s password; if it shows an error, say so.", false)
@@ -773,6 +781,22 @@ public final class Agent {
         default:
             return ("Unknown action \(action)", false)
         }
+    }
+
+    /// Words read from a picture of the window, top to bottom. For apps that draw their own text (GPU terminals such as
+    /// cmux and Ghostty), where accessibility returns nothing to check typing against.
+    func pictureText(_ snap: ScreenSnapshot?) async -> [String]? {
+        guard useEyes, let snap, let img = await Eyes.capture(pid: snap.pid, windowFrame: snap.windowFrame) else { return nil }
+        return Eyes.readText(img, windowFrame: snap.windowFrame, max: 400).map(\.text)
+    }
+
+    /// Is most of `text` readable in what the picture shows? Letters a picture reader confuses (l, 1, I and o, 0) count as the same.
+    static func mostlySeen(_ text: String, in lines: [String]) -> Bool {
+        func norm(_ s: String) -> String { String(s.lowercased().map { "1i|".contains($0) ? "l" : $0 == "0" ? "o" : $0 }.filter { $0.isLetter || $0.isNumber }) }
+        let hay = norm(lines.joined())
+        let words = text.split { !$0.isLetter && !$0.isNumber }.map { norm(String($0)) }.filter { $0.count > 2 }
+        guard !words.isEmpty else { return true }
+        return Double(words.filter { hay.contains($0) }.count) / Double(words.count) >= 0.6
     }
 
     /// Wait until the screen reacts to an action and stops changing (at most about a second), instead of a fixed pause.
