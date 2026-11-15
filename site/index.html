@@ -3,303 +3,342 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>ONBOARD</title>
+  <title>Onboard, say it and your Mac does it</title>
   <meta name="description" content="Onboard is a fully on-device agent with its own cursor that runs your Mac by voice. It reads the screen, clicks and types, checks its own work, and works with WiFi off." />
-  <meta name="theme-color" content="#0a0a0a" />
+  <meta property="og:title" content="Onboard, say it and your Mac does it" />
+  <meta property="og:description" content="A fully on-device agent with its own cursor that runs your Mac by voice. WiFi off. 0 bytes to the cloud." />
+  <meta property="og:type" content="website" />
+  <meta name="theme-color" content="#08090a" />
   <link rel="icon" href="img/icon.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=VT323&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
+  <script>document.documentElement.classList.add('js');</script>
 </head>
 <body>
-  <div class="crt-overlay" aria-hidden="true"></div>
-  <div class="scanline" aria-hidden="true"></div>
 
-  <header class="topbar">
-    <div class="topbar-row">
-      <span class="bracket">[</span>
-      <span class="tag">ONBOARD</span>
-      <span class="v">v0.1</span>
-      <span class="bracket">]</span>
-      <span class="sep">//</span>
-      <span class="muted">you@mac:~$</span>
-      <span class="cmd">./onboard</span>
-      <span class="cursor">█</span>
+  <header class="nav">
+    <div class="wrap nav-row">
+      <a class="brand" href="#top"><img src="img/icon.png" alt="" />onboard</a>
+      <nav class="nav-links" aria-label="Sections">
+        <a href="#demo">Demo</a>
+        <a href="#how">How it works</a>
+        <a href="#say">Say it</a>
+        <a href="#stack">Stack</a>
+        <a href="#can">What it can do</a>
+      </nav>
+      <a class="btn btn-ghost btn-sm" href="https://github.com/Arsh-S/onboard" target="_blank" rel="noopener">GitHub</a>
     </div>
-    <nav class="topbar-nav">
-      <a href="#demo">[demo]</a>
-      <a href="#screens">[screens]</a>
-      <a href="#how">[how]</a>
-      <a href="#stack">[stack]</a>
-      <a href="#say">[say]</a>
-      <a href="https://github.com/Arsh-S/onboard" class="nav-cta" target="_blank" rel="noopener">[github]</a>
-    </nav>
   </header>
 
-  <main>
+  <main id="top">
+
     <section class="hero">
-      <div class="hero-brand">
-        <img src="img/icon.png" alt="Onboard app icon" />
-        <pre class="ascii-logo" aria-label="ONBOARD">
- ██████╗ ███╗   ██╗██████╗  ██████╗  █████╗ ██████╗ ██████╗
-██╔═══██╗████╗  ██║██╔══██╗██╔═══██╗██╔══██╗██╔══██╗██╔══██╗
-██║   ██║██╔██╗ ██║██████╔╝██║   ██║███████║██████╔╝██║  ██║
-██║   ██║██║╚██╗██║██╔══██╗██║   ██║██╔══██║██╔══██╗██║  ██║
-╚██████╔╝██║ ╚████║██████╔╝╚██████╔╝██║  ██║██║  ██║██████╔╝
- ╚═════╝ ╚═╝  ╚═══╝╚═════╝  ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═════╝</pre>
-      </div>
-
-      <p class="tagline">
-        <span class="prompt">&gt;</span>
-        <span id="typed"></span><span class="cursor">█</span>
-      </p>
-
-      <p class="sub">
-        <span class="muted"># an agent with its own cursor that runs your mac by voice.</span><br />
-        <span class="muted"># it reads the screen, clicks and types, checks its own work. everything runs on the laptop.</span>
-      </p>
-
-      <div class="cta">
-        <a class="btn" href="#demo">[ WATCH DEMO ]</a>
-        <a class="btn" href="#screens">[ SEE THE APP ]</a>
-        <a class="btn" href="https://github.com/Arsh-S/onboard" target="_blank" rel="noopener">[ GET THE CODE ]</a>
-      </div>
-
-      <div class="status-panel">
-        <div class="status-header">+--- SYSTEM STATUS ---+</div>
-        <div class="status-row"><span class="label">hearing</span>: <span class="v">argmax whisperkit [READY]</span></div>
-        <div class="status-row"><span class="label">thinking</span>: <span class="v">bonsai 2 9b + 2b // ~53 tok/s</span></div>
-        <div class="status-row"><span class="label">speaking</span>: <span class="v">argmax ttskit [READY]</span></div>
-        <div class="status-row"><span class="label">voice lock</span>: <span class="v">owner only</span></div>
-        <div class="status-row"><span class="label">wifi</span>: <span class="v">[OFF]</span></div>
-        <div class="status-row"><span class="label">to cloud</span>: <span class="v">0 B</span></div>
-        <div class="status-footer">+---------------------+</div>
-      </div>
-    </section>
-
-    <section id="demo" class="section">
-      <h2 class="section-title">// 01 the demo</h2>
-      <p class="section-lead">
-        under two minutes, one take. the first thing it is asked to do is
-        <span class="hl">turn the wifi off</span>. everything after that happens offline.
-      </p>
-      <div class="video-wrap">
-        <iframe src="https://www.youtube-nocookie.com/embed/BID-BlCLohU" title="Onboard demo video" loading="lazy" allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
-      </div>
-    </section>
-
-    <section id="screens" class="section">
-      <h2 class="section-title">// 02 the app</h2>
-      <p class="section-lead">
-        onboard shows its work. its own teal cursor moves across your screen while
-        <span class="hl">your pointer stays where you left it</span>.
-      </p>
-
-      <figure class="shot">
-        <div class="shot-head"><span>+ reading the window +</span><span>overlay // x-ray</span></div>
-        <img src="img/overlay_xray.jpg" alt="Onboard outlining every control in a window while its cursor shows a Reading the window label" loading="lazy" />
-        <figcaption># before it acts, it reads every control in the front window and outlines what it found.</figcaption>
-      </figure>
-
-      <div class="shot-grid">
-        <figure class="shot">
-          <div class="shot-head"><span>+ its own cursor +</span><span>overlay // flight</span></div>
-          <img src="img/overlay_flight.jpg" alt="Onboard's teal cursor gliding toward a button" loading="lazy" />
-          <figcaption># the cursor glides to the exact control and says what it is about to do.</figcaption>
-        </figure>
-        <figure class="shot">
-          <div class="shot-head"><span>+ it asks first +</span><span>overlay // approval</span></div>
-          <img src="img/overlay_approval.jpg" alt="An approval card asking before a risky action" loading="lazy" />
-          <figcaption># sending a message or moving files shows an approval card. it never presses send for you.</figcaption>
-        </figure>
-      </div>
-
-      <div class="shot-grid" style="margin-top:22px">
-        <figure class="shot">
-          <div class="shot-head"><span>+ the command bar +</span><span>option-space</span></div>
-          <img src="img/ui_bar_answer.png" alt="The Onboard command bar showing two finished steps and a spoken answer with its source file" loading="lazy" />
-          <figcaption># every step, how long it took, the answer, and the file it came from.</figcaption>
-        </figure>
-        <figure class="shot">
-          <div class="shot-head"><span>+ the control room +</span><span>settings</span></div>
-          <img src="img/ui_settings.png" alt="The Onboard settings window with model status, permissions, voice lock and hotkeys" loading="lazy" />
-          <figcaption># models, permissions, your memory folder, and the voice lock, on one screen.</figcaption>
-        </figure>
-      </div>
-
-      <p class="section-lead muted" style="margin-top:22px"># the pill at the bottom of the screen: listening, thinking, speaking, done.</p>
-      <div class="pill-row">
-        <figure class="shot"><img src="img/ui_pill_listening.png" alt="Pill showing voice level bars while listening" loading="lazy" /></figure>
-        <figure class="shot"><img src="img/ui_pill_thinking_text.png" alt="Pill showing what it heard while thinking" loading="lazy" /></figure>
-        <figure class="shot"><img src="img/ui_pill_speaking.png" alt="Pill showing bars while speaking" loading="lazy" /></figure>
-        <figure class="shot"><img src="img/ui_pill_done.png" alt="Pill showing a check mark when done" loading="lazy" /></figure>
-      </div>
-    </section>
-
-    <section id="say" class="section graph-section">
-      <h2 class="section-title">// 03 say it</h2>
-      <p class="section-lead">
-        hold <span class="hl">fn</span> and talk, or say <span class="hl">"onboard"</span> and keep your hands free.
-        pick a request to see what happens.
-      </p>
-
-      <div class="cli-demo" id="cli-demo">
-        <div class="cli-tabs" role="tablist" aria-label="things to say">
-          <button class="cli-tab active" type="button" role="tab">[ reminder ]</button>
-          <button class="cli-tab" type="button" role="tab">[ it asks ]</button>
-          <button class="cli-tab" type="button" role="tab">[ type it ]</button>
-          <button class="cli-tab" type="button" role="tab">[ rewrite ]</button>
-          <button class="cli-tab" type="button" role="tab">[ hands-free ]</button>
-          <button class="cli-tab" type="button" role="tab">[ wifi off ]</button>
+      <div class="wrap">
+        <span class="badge"><span class="dot"></span>On-device · 0 B to cloud</span>
+        <h1 class="display"><span class="grad">Say it. Your Mac</span> <span class="serif grad">does it.</span></h1>
+        <p class="lead">
+          Onboard is an agent with <b>its own cursor</b> that runs your Mac by voice. It reads the screen,
+          clicks and types, then checks its own work. Everything runs on the laptop, <b>with the WiFi off</b>.
+        </p>
+        <div class="cta">
+          <a class="btn btn-primary" href="#demo">Watch the demo</a>
+          <a class="btn btn-ghost" href="https://github.com/Arsh-S/onboard" target="_blank" rel="noopener">Get the code</a>
         </div>
-        <div class="cli-window" role="tabpanel" aria-live="polite">
-          <div class="cli-toolbar">
-            <span class="cli-dot cli-dot-r" aria-hidden="true"></span>
-            <span class="cli-dot cli-dot-y" aria-hidden="true"></span>
-            <span class="cli-dot cli-dot-g" aria-hidden="true"></span>
-            <span class="cli-title">onboard // one request</span>
-          </div>
-          <div class="cli-screen">
-            <div class="cli-line cli-prompt-line">
-              <span class="cli-user">you</span><span class="cli-sep">:</span><span class="cli-path">fn</span><span class="cli-sep">$</span>
-              <span class="cli-cmd" id="cli-cmd"></span><span class="cli-cursor" id="cli-cursor">█</span>
-            </div>
-            <div class="cli-output" id="cli-output"></div>
+        <div class="facts">
+          <span><b>Bonsai 2</b> thinks</span>
+          <span><b>Argmax</b> hears and speaks</span>
+          <span><b>Voice lock</b> owner only</span>
+          <span><b>0 B</b> to cloud</span>
+        </div>
+
+        <div id="demo" class="window glow hero-video reveal">
+          <div class="window-bar"><i></i><i></i><i></i><span class="title">onboard · demo · one take, under two minutes</span><span class="chip">● WIFI OFF</span></div>
+          <div class="video">
+            <iframe src="https://www.youtube-nocookie.com/embed/BID-BlCLohU" title="Onboard demo video" loading="lazy" allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
           </div>
         </div>
       </div>
     </section>
 
     <section id="how" class="section">
-      <h2 class="section-title">// 04 how it works</h2>
-      <div class="two-col">
-        <div class="pane">
-          <div class="pane-header">+-- the cloud assistant, rebuilt on your mac --+</div>
-          <p>
-            assistants that can operate a computer send your screen and your voice to a data center.
-            onboard does the same job on the laptop itself. on a plane, in a lab with no signal,
-            or with files that cannot leave the building, it keeps working.
+      <div class="wrap">
+        <div class="center reveal">
+          <span class="kicker">How it works</span>
+          <h2 class="h2">The cloud assistant, <span class="serif">rebuilt on your Mac.</span></h2>
+          <p class="p">
+            Assistants that can operate a computer send your screen and your voice to a data center.
+            Onboard does the same job on the laptop itself. The first thing it does in the demo is turn the WiFi off.
           </p>
         </div>
-        <div class="pane">
-          <div class="pane-header">+-- one request, four moves --+</div>
-<pre class="layers">
-1. <span class="kw">hear</span>    → whisperkit turns speech into text
-2. <span class="kw">see</span>     → the front window, read as a list of controls
-3. <span class="kw">act</span>     → one action per step, with its own cursor
-4. <span class="kw">verify</span>  → reads the result back before it says done</pre>
+
+        <div class="features">
+
+          <div class="feature reveal">
+            <div class="feature-media">
+              <div class="window">
+                <div class="window-bar"><i></i><i></i><i></i><span class="title">overlay · reading the window</span><span class="chip">X-RAY</span></div>
+                <img src="img/overlay_xray.jpg" alt="Onboard outlining every control in a window while its cursor shows a Reading the window label" loading="lazy" />
+              </div>
+            </div>
+            <div class="feature-text">
+              <span class="kicker"><span class="n">01</span><span class="rule"></span>See</span>
+              <h3 class="h3">It reads the window before it touches anything.</h3>
+              <p class="p">
+                Onboard reads the app in front as an exact list of controls, then outlines what it found.
+                When an app exposes nothing, it reads the text from a picture of the window instead.
+              </p>
+              <ul class="ticks">
+                <li>Every button, field and menu command, by name</li>
+                <li>A fresh read of the screen at every step</li>
+                <li>Pictures for charts, images and error dialogs</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="feature flip reveal">
+            <div class="feature-media">
+              <div class="stack-shots">
+                <div class="window">
+                  <div class="window-bar"><i></i><i></i><i></i><span class="title">overlay · cursor in flight</span><span class="chip">ACT</span></div>
+                  <img src="img/overlay_flight.jpg" alt="Onboard's teal cursor gliding toward a button with a label saying what it is about to do" loading="lazy" />
+                </div>
+              </div>
+            </div>
+            <div class="feature-text">
+              <span class="kicker"><span class="n">02</span><span class="rule"></span>Act</span>
+              <h3 class="h3">Its own cursor. <span class="serif">Yours stays put.</span></h3>
+              <p class="p">
+                A teal cursor glides to the exact control, says what it is about to do, then clicks and types
+                through the task. Your pointer stays where you left it.
+              </p>
+              <ul class="ticks">
+                <li>Clicks, types, presses keys and chooses menu commands</li>
+                <li>Reminders and calendar events in about 3 seconds</li>
+                <li>Rewrites the text you selected, in place, in about 9 seconds</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="feature reveal">
+            <div class="feature-media">
+              <div class="stack-shots">
+                <div class="window">
+                  <div class="window-bar"><i></i><i></i><i></i><span class="title">command bar · option-space</span><span class="chip">VERIFIED</span></div>
+                  <img src="img/ui_bar_answer.png" alt="The Onboard command bar showing two finished steps and an answer with its source file" loading="lazy" />
+                </div>
+                <div class="window">
+                  <div class="window-bar"><i></i><i></i><i></i><span class="title">overlay · approval card</span><span class="chip">ASKS FIRST</span></div>
+                  <img src="img/overlay_approval.jpg" alt="An approval card asking before a risky action" loading="lazy" />
+                </div>
+              </div>
+            </div>
+            <div class="feature-text">
+              <span class="kicker"><span class="n">03</span><span class="rule"></span>Verify</span>
+              <h3 class="h3">It checks its work before it says done.</h3>
+              <p class="p">
+                Typed text is read back from the app. A number it never saw is refused before it is written.
+                A request that is missing something gets a question, not a guess.
+              </p>
+              <ul class="ticks">
+                <li>Every step, how long it took, and the file an answer came from</li>
+                <li>An action that failed is never tried twice</li>
+                <li>Sending a message or moving files shows an approval card first</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="feature flip reveal">
+            <div class="feature-media">
+              <div class="window">
+                <div class="window-bar"><i></i><i></i><i></i><span class="title">onboard · settings</span><span class="chip">VOICE LOCK</span></div>
+                <img src="img/ui_settings.png" alt="The Onboard settings window with model status, permissions, voice lock and hotkeys" loading="lazy" />
+              </div>
+              <div class="pills">
+                <div class="window"><img src="img/ui_pill_listening.png" alt="Pill showing voice level bars while listening" loading="lazy" /></div>
+                <div class="window"><img src="img/ui_pill_thinking_text.png" alt="Pill showing what it heard while thinking" loading="lazy" /></div>
+                <div class="window"><img src="img/ui_pill_speaking.png" alt="Pill showing bars while speaking" loading="lazy" /></div>
+                <div class="window"><img src="img/ui_pill_done.png" alt="Pill showing a check mark when done" loading="lazy" /></div>
+              </div>
+            </div>
+            <div class="feature-text">
+              <span class="kicker"><span class="n">04</span><span class="rule"></span>Hands-free</span>
+              <h3 class="h3">The whole Mac, <span class="serif">by voice alone.</span></h3>
+              <p class="p">
+                Say "Onboard" to start and "cancel" to stop. Answers are spoken. A one minute training teaches it
+                your voice, and after that it turns everyone else away.
+              </p>
+              <ul class="ticks">
+                <li>Wake word, or hold fn and talk</li>
+                <li>"Cancel" stops the run, the voice, and clears the screen</li>
+                <li>A pill shows listening, thinking, speaking and done</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="feature reveal">
+            <div class="feature-media">
+              <div class="window">
+                <div class="window-bar"><i></i><i></i><i></i><span class="title">overlay · the click</span><span class="chip">0 B TO CLOUD</span></div>
+                <img src="img/overlay_click.jpg" alt="Onboard's cursor clicking a control in an app window" loading="lazy" />
+              </div>
+            </div>
+            <div class="feature-text">
+              <span class="kicker"><span class="n">05</span><span class="rule"></span>Local</span>
+              <h3 class="h3">WiFi off. <span class="serif">Still works.</span></h3>
+              <p class="p">
+                Thinking, hearing, speaking and voice recognition all run on the Mac. On a plane, in a lab with
+                no signal, or with files that cannot leave the building, it keeps working.
+              </p>
+              <ul class="ticks">
+                <li>"Turn the WiFi off" is something you can ask it to do</li>
+                <li>Your screen and your voice never leave the laptop</li>
+                <li>Bonsai 2 generates at about 53 tokens per second</li>
+              </ul>
+            </div>
+          </div>
+
         </div>
       </div>
-      <div class="two-col" style="margin-top:22px">
-        <div class="pane">
-          <div class="pane-header">+-- it checks itself --+</div>
-          <p>
-            typed text is read back from the app. a number it never saw is refused before it is written.
-            a request that is missing something gets a question, not a guess. an action that failed is never tried twice.
-          </p>
+    </section>
+
+    <section id="say" class="section">
+      <div class="wrap center">
+        <div class="reveal">
+          <span class="kicker">Say it</span>
+          <h2 class="h2">One request, <span class="serif">start to finish.</span></h2>
+          <p class="p">Hold fn and talk, or say "Onboard" and keep your hands free. Pick a request to see what happens.</p>
         </div>
-        <div class="pane">
-          <div class="pane-header">+-- usable by voice alone --+</div>
-          <p>
-            say "onboard" to start and "cancel" to stop. answers are spoken. a one minute training teaches it
-            your voice, and after that it turns everyone else away.
-          </p>
+
+        <div class="demo reveal" id="cli-demo">
+          <div class="tabs" role="tablist" aria-label="Things to say">
+            <button class="cli-tab active" type="button" role="tab">Reminder</button>
+            <button class="cli-tab" type="button" role="tab">It asks</button>
+            <button class="cli-tab" type="button" role="tab">Type it</button>
+            <button class="cli-tab" type="button" role="tab">Rewrite</button>
+            <button class="cli-tab" type="button" role="tab">Hands-free</button>
+            <button class="cli-tab" type="button" role="tab">WiFi off</button>
+          </div>
+          <div class="window glow" role="tabpanel" aria-live="polite">
+            <div class="window-bar"><i></i><i></i><i></i><span class="title">onboard · one request</span><span class="chip">● ON-DEVICE</span></div>
+            <div class="cli-screen">
+              <div class="cli-prompt-line">
+                <span class="who">You</span>
+                <span><span id="cli-cmd">"Remind me to call the dentist tomorrow at 9."</span><span class="cli-cursor" aria-hidden="true"></span></span>
+              </div>
+              <div class="cli-output" id="cli-output">
+                <div class="l tok-muted"><span class="k">hear</span><span>WhisperKit large-v3 turbo, on device</span></div>
+                <div class="l tok-ok"><span class="k">act</span><span>Adds the reminder: Call the dentist, tomorrow at 9</span></div>
+                <div class="l tok-header"><span class="k">say</span><span>"Reminder added: Call the dentist, due tomorrow at 9:00 AM."</span></div>
+                <div class="l tok-muted"><span class="k">time</span><span>About 3 seconds. 0 B to cloud.</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid-4 reveal">
+          <div class="card"><div class="step-n">1</div><h4>Hear</h4><p>WhisperKit turns speech into text, on the Mac.</p></div>
+          <div class="card"><div class="step-n">2</div><h4>See</h4><p>The front window, read as a list of controls.</p></div>
+          <div class="card"><div class="step-n">3</div><h4>Act</h4><p>One action per step, with its own cursor.</p></div>
+          <div class="card"><div class="step-n">4</div><h4>Verify</h4><p>Reads the result back before it says done.</p></div>
         </div>
       </div>
     </section>
 
     <section id="stack" class="section">
-      <h2 class="section-title">// 05 the stack</h2>
-      <div class="two-col arch-cols">
-        <div class="arch-stack">
-          <div class="pane">
-            <div class="pane-header">THINKING  (prismml bonsai 2, via lm studio)</div>
-            <pre class="arch-body">bonsai 2 9b    plans each step, one json action
-               looks at pictures of the window
-               judges whether the task is done
-bonsai 2 2b    quick answers</pre>
-          </div>
-          <div class="pane">
-            <div class="pane-header">VOICE  (argmax)</div>
-            <pre class="arch-body">whisperkit     hears you (large-v3 turbo)
-               wake word check (base.en)
-speakerkit     recognizes the owner's voice
-ttskit         speaks the answer</pre>
-          </div>
+      <div class="wrap center">
+        <div class="reveal">
+          <span class="kicker">The stack</span>
+          <h2 class="h2">Small models, <span class="serif">shaped to the job.</span></h2>
+          <p class="p">Each part does one thing, and all of it runs in the room with you.</p>
         </div>
-        <div class="arch-stack">
-          <div class="pane">
-            <div class="pane-header">HANDS AND EYES  (macos)</div>
-            <pre class="arch-body">accessibility  the screen as exact text
-vision         reads text from a picture when
-               an app exposes nothing
-overlay        the teal cursor, x-ray, approvals</pre>
+        <div class="grid-4 reveal">
+          <div class="card">
+            <div class="label">Thinking</div><div class="by">PrismML Bonsai 2 · LM Studio</div>
+            <ul>
+              <li><b>Bonsai 2 9B</b> plans each step, looks at pictures of the window, and judges whether the task is done</li>
+              <li><b>Bonsai 2 2B</b> gives quick answers</li>
+            </ul>
           </div>
-          <div class="pane">
-            <div class="pane-header">MEMORY  (local)</div>
-            <pre class="arch-body">notes folder   your .md and .txt files
-embeddings     nomic-embed-text, on device
-answers        name the file they came from</pre>
+          <div class="card">
+            <div class="label">Voice</div><div class="by">Argmax</div>
+            <ul>
+              <li><b>WhisperKit</b> hears you, and listens for the wake word</li>
+              <li><b>SpeakerKit</b> recognizes the owner's voice</li>
+              <li><b>TTSKit</b> speaks the answer</li>
+            </ul>
+          </div>
+          <div class="card">
+            <div class="label">Hands and eyes</div><div class="by">macOS</div>
+            <ul>
+              <li><b>Accessibility</b> gives the screen as exact text</li>
+              <li><b>Vision</b> reads text from a picture when an app exposes nothing</li>
+              <li><b>Overlay</b> draws the teal cursor, the x-ray and approvals</li>
+            </ul>
+          </div>
+          <div class="card">
+            <div class="label">Memory</div><div class="by">Local files</div>
+            <ul>
+              <li><b>Your notes</b> as plain .md and .txt files</li>
+              <li><b>Embeddings</b> computed on device</li>
+              <li><b>Answers</b> name the file they came from</li>
+            </ul>
           </div>
         </div>
       </div>
     </section>
 
-    <section class="section">
-      <h2 class="section-title">// 06 what it can do</h2>
-      <p class="section-lead muted"># in the build you can run today.</p>
-      <table class="man-page">
-        <thead>
-          <tr><th>ask for</th><th>say</th><th>what happens</th></tr>
-        </thead>
-        <tbody>
-          <tr><td>reminder</td><td>"remind me to call the dentist tomorrow at 9"</td><td>added to reminders, in about 3 seconds</td></tr>
-          <tr><td>calendar</td><td>"add lunch with jared friday at noon"</td><td>added to your calendar, no app opened</td></tr>
-          <tr><td>type</td><td>"add a line that says pump a checked"</td><td>the cursor types it and reads it back</td></tr>
-          <tr><td>rewrite</td><td>"make this sound more professional"</td><td>your selection is replaced in place</td></tr>
-          <tr><td>notes</td><td>"what do my notes say about filter changes?"</td><td>answers from your files and names the source</td></tr>
-          <tr><td>look</td><td>"what's wrong in this chart?"</td><td>answers from a picture of the window</td></tr>
-          <tr><td>point</td><td>"where is the save button?"</td><td>the cursor goes to it</td></tr>
-          <tr><td>files</td><td>"put the screenshots into a folder called shots"</td><td>moves them after you approve</td></tr>
-          <tr><td>relay</td><td>"ask this chat what the project does"</td><td>types the question into the app in front and sends it</td></tr>
-          <tr><td>dictate</td><td>hold fn + control</td><td>your words, typed into any app</td></tr>
-          <tr><td>wifi</td><td>"turn the wifi off"</td><td>it does, and keeps working</td></tr>
-          <tr><td>cancel</td><td>"cancel"</td><td>stops the run and the voice, clears the screen</td></tr>
-        </tbody>
-      </table>
+    <section id="can" class="section">
+      <div class="wrap center">
+        <div class="reveal">
+          <span class="kicker">What it can do</span>
+          <h2 class="h2">In the build <span class="serif">you can run today.</span></h2>
+        </div>
+        <div class="table-wrap reveal">
+          <table class="can">
+            <thead><tr><th>Ask for</th><th>Say</th><th>What happens</th></tr></thead>
+            <tbody>
+              <tr><td>Reminder</td><td>"Remind me to call the dentist tomorrow at 9."</td><td>Added to Reminders, in about 3 seconds</td></tr>
+              <tr><td>Calendar</td><td>"Add lunch with Jared to my calendar Friday at noon."</td><td>Added to your calendar, no app opened</td></tr>
+              <tr><td>Type</td><td>"Add a line that says pump A checked."</td><td>The cursor types it and reads it back</td></tr>
+              <tr><td>Rewrite</td><td>"Make this sound more professional."</td><td>Your selection is replaced in place</td></tr>
+              <tr><td>Notes</td><td>"What do my notes say about filter changes?"</td><td>Answers from your files and names the source</td></tr>
+              <tr><td>Look</td><td>"What's wrong in this chart?"</td><td>Answers from a picture of the window</td></tr>
+              <tr><td>Point</td><td>"Where is the save button?"</td><td>The cursor goes to it</td></tr>
+              <tr><td>Files</td><td>"Put the screenshots into a folder called Shots."</td><td>Moves them after you approve</td></tr>
+              <tr><td>Relay</td><td>"Ask this chat what the project does."</td><td>Types the question into the app in front and sends it</td></tr>
+              <tr><td>Dictate</td><td>Hold fn and control</td><td>Your words, typed into any app</td></tr>
+              <tr><td>WiFi</td><td>"Turn the WiFi off."</td><td>It does, and keeps working</td></tr>
+              <tr><td>Cancel</td><td>"Cancel."</td><td>Stops the run and the voice, clears the screen</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
     </section>
 
-    <section class="section">
-      <h2 class="section-title">// 07 field log</h2>
-      <pre class="field-log">
-$ tail -n 9 ~/Library/Application\ Support/Onboard/runs/last.txt
-[<span class="muted">request</span>] Add a line that says Pump A checked
-[<span class="muted">see    </span>] TextEdit, window "maintenance-log.txt", 1 field
-[<span class="muted">step 1 </span>] type(Pump A checked)  2.1 s
-[<span class="muted">result </span>] Verified: "Pump A checked" is now in the document
-[<span class="muted">verify </span>] Confirmed: the line is visible below "Pump B checked"
-[<span class="muted">answer </span>] I added the line Pump A checked to your document.
-[<span class="muted">turn   </span>] 7.7 s · wifi off · 0 B to cloud  <span class="ok">[OK]</span></pre>
+    <section class="closing">
+      <div class="wrap reveal">
+        <img class="icon" src="img/icon.png" alt="Onboard app icon" />
+        <h2 class="h2">Say "Onboard" <span class="serif">to begin.</span></h2>
+        <p class="p" style="margin-left:auto;margin-right:auto">Open source. Runs on a Mac with Apple silicon. Nothing leaves it.</p>
+        <div class="cta">
+          <a class="btn btn-primary" href="https://github.com/Arsh-S/onboard" target="_blank" rel="noopener">Get the code</a>
+          <a class="btn btn-ghost" href="#demo">Watch the demo</a>
+        </div>
+      </div>
     </section>
+
   </main>
 
   <footer class="foot">
-    <div class="foot-row">
-      <span class="muted"># onboard</span>
-      <span class="sep">//</span>
-      <span class="muted">built at the cornell local ai hackathon</span>
-      <span class="sep">//</span>
-      <span class="muted">bonsai 2 · whisperkit · speakerkit · ttskit · lm studio</span>
-    </div>
-    <div class="foot-row">
-      <span class="muted"># code →</span>
-      <a href="https://github.com/Arsh-S/onboard" class="foot-link" target="_blank" rel="noopener">[github.com/Arsh-S/onboard ↗]</a>
-      <span class="sep">//</span>
-      <a href="https://arshsingh.net" class="foot-link" target="_blank" rel="noopener">[arshsingh.net ↗]</a>
-    </div>
-    <div class="foot-row muted">
-      # say "onboard" to begin. <span class="cursor">█</span>
+    <div class="wrap foot-row">
+      <span class="brand" style="font-size:15px"><img src="img/icon.png" alt="" style="width:20px;height:20px;border-radius:5px" />onboard</span>
+      <span>Built at the Cornell Local AI Hackathon</span>
+      <span class="right">
+        <a href="https://github.com/Arsh-S/onboard" target="_blank" rel="noopener">github.com/Arsh-S/onboard</a>
+        <a href="https://arshsingh.net" target="_blank" rel="noopener">arshsingh.net</a>
+      </span>
     </div>
   </footer>
 

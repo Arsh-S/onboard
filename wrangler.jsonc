@@ -1,0 +1,7 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "onboard-landing",
+  "compatibility_date": "2026-11-13",
+  "assets": { "directory": "site" },
+  "routes": [ { "pattern": "onboard.arshsingh.net", "custom_domain": true } ]
+}
